@@ -1,0 +1,874 @@
+import type {
+	IDataObject,
+	IExecuteFunctions,
+	IHttpRequestOptions,
+	INodeExecutionData,
+	INodeType,
+	INodeTypeDescription,
+	JsonObject,
+} from 'n8n-workflow';
+import { NodeApiError, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+
+// Path appended to the credential base URL to reach the SOAP endpoint.
+const SOAP_PATH = '/soap-generic/syracuse/collaboration/syracuse/CAdxWebServiceXmlCC';
+
+// Default X3 sub-program implementing the JSON-driven object API (patch ChatX3).
+const DEFAULT_PUBLIC_NAME = 'XCHATX3OBJ';
+
+type Operation = 'read' | 'create' | 'modify' | 'runRaw';
+
+// Map UI operation → XACTION value sent in the X3 inputXml.
+const ACTION_MAP: Record<Exclude<Operation, 'runRaw'>, string> = {
+	read: 'READ',
+	create: 'CREATE',
+	modify: 'MODIFY',
+};
+
+interface CallContext {
+	codeLang: string;
+	poolAlias: string;
+	poolId: string;
+	requestConfig: string;
+}
+
+// ---------------------------------------------------------------------------
+// XML helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Escape for XML element content (text between tags). Only &, <, > are mandatory.
+ * Leaving " and ' as literals matches what SoapUI sends and what X3 / XCHATX3OBJ expects,
+ * since some X3 parsers don't decode &quot; / &apos; reliably inside FLD values.
+ */
+function xmlEscape(s: string): string {
+	return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function xmlUnescape(s: string): string {
+	return s
+		// Numeric character references (hex and decimal) — X3 emits these for whitespace
+		// in echoed payloads, e.g. &#x0a; for newline, &#x09; for tab.
+		.replace(/&#x([0-9a-fA-F]+);/g, (_, h) => {
+			const code = parseInt(h, 16);
+			return Number.isFinite(code) ? String.fromCodePoint(code) : '';
+		})
+		.replace(/&#(\d+);/g, (_, d) => {
+			const code = parseInt(d, 10);
+			return Number.isFinite(code) ? String.fromCodePoint(code) : '';
+		})
+		.replace(/&lt;/g, '<')
+		.replace(/&gt;/g, '>')
+		.replace(/&quot;/g, '"')
+		.replace(/&apos;/g, "'")
+		// &amp; must come last so e.g. "&amp;lt;" decodes to "<" not "&lt;"
+		.replace(/&amp;/g, '&');
+}
+
+function wrapCdata(s: string): string {
+	// Defensive: if the payload itself contains ']]>', split it to keep CDATA valid.
+	const safe = s.split(']]>').join(']]]]><![CDATA[>');
+	return `<![CDATA[${safe}]]>`;
+}
+
+function readTextContent(s: string): string {
+	const cdataMatch = s.match(/^<!\[CDATA\[([\s\S]*?)\]\]>$/);
+	if (cdataMatch) return cdataMatch[1];
+	return xmlUnescape(s.trim());
+}
+
+/**
+ * Capture the inner content of the first element with a given local name (namespace-agnostic).
+ */
+function pickElement(xml: string, localName: string): string | undefined {
+	const safeName = localName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const re = new RegExp(
+		`<(?:[\\w.-]+:)?${safeName}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:[\\w.-]+:)?${safeName}>`,
+		'i',
+	);
+	const m = xml.match(re);
+	return m ? m[1] : undefined;
+}
+
+/**
+ * Build a lookup of all <multiRef id="...">...</multiRef> blocks in the envelope.
+ * SOAP RPC/encoded responses (used by older Apache Axis backends like Sage X3)
+ * defer object content to multiRef blocks referenced by href="#id" from elsewhere.
+ */
+function extractMultiRefs(xml: string): Map<string, string> {
+	const refs = new Map<string, string>();
+	const re = /<(?:[\w.-]+:)?multiRef\b[^>]*\bid="([^"]+)"[^>]*>([\s\S]*?)<\/(?:[\w.-]+:)?multiRef>/gi;
+	let m: RegExpExecArray | null;
+	while ((m = re.exec(xml)) !== null) {
+		refs.set(m[1], m[2]);
+	}
+	return refs;
+}
+
+/**
+ * Map X3 numeric message types to a readable label. Best-effort, X3 type codes vary;
+ * the original numeric value is preserved alongside as `typeCode`.
+ */
+function labelForType(code: string | undefined): string {
+	switch ((code ?? '').trim()) {
+		case '1':
+			return 'info';
+		case '2':
+			return 'warning';
+		case '3':
+			return 'error';
+		case '4':
+			return 'error';
+		default:
+			return code ?? '';
+	}
+}
+
+/**
+ * Extract messages from the SOAP-level <messages> container.
+ * Supports both inline content and SOAP multi-ref encoding (href="#idN").
+ * Returns [] if absent.
+ */
+function pickSoapMessages(xml: string, multiRefs: Map<string, string>): IDataObject[] {
+	const container = pickElement(xml, 'messages');
+	if (!container) return [];
+	const out: IDataObject[] = [];
+
+	// Walk over every direct child of the messages container so we can interleave
+	// inline entries and href references in the order they appear.
+	const childRe =
+		/<(?:[\w.-]+:)?(messages|item)\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:[\w.-]+:)?\1>)/gi;
+	let m: RegExpExecArray | null;
+	while ((m = childRe.exec(container)) !== null) {
+		const attrs = m[2] ?? '';
+		const inline = m[3];
+
+		let inner: string | undefined;
+		const hrefMatch = attrs.match(/\bhref="#([^"]+)"/);
+		if (hrefMatch) {
+			inner = multiRefs.get(hrefMatch[1]);
+		} else if (inline !== undefined) {
+			inner = inline;
+		}
+		if (inner === undefined) continue;
+
+		const message = pickElement(inner, 'message');
+		const type = pickElement(inner, 'type');
+		const typeRaw = type !== undefined ? readTextContent(type) : '';
+		out.push({
+			message: message !== undefined ? readTextContent(message) : '',
+			type: labelForType(typeRaw),
+			typeCode: typeRaw,
+		});
+	}
+	return out;
+}
+
+/**
+ * Find the inner text of the FLD with NAME=<fieldName> inside a resultXml string.
+ */
+function pickResultField(resultXml: string, fieldName: string): string | undefined {
+	if (!resultXml) return undefined;
+	const safeName = fieldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const re = new RegExp(`<FLD\\b[^>]*\\bNAME="${safeName}"[^>]*>([\\s\\S]*?)<\\/FLD>`, 'i');
+	const m = resultXml.match(re);
+	if (!m) return undefined;
+	return readTextContent(m[1]);
+}
+
+/**
+ * Try to parse a string as JSON, falling back to the raw string if it isn't valid JSON.
+ */
+function tryParseJson(s: string | undefined): unknown {
+	if (s === undefined || s === '') return undefined;
+	try {
+		return JSON.parse(s);
+	} catch {
+		return s;
+	}
+}
+
+/**
+ * Drop trailing empty values from an array. X3 returns dimensioned fields with every
+ * "slot" filled, even unused ones — e.g. `"CCE": ["PEND-001","","","","",""]` is really
+ * a 1-value array padded to the field's max dimension. Trailing "" / null / undefined
+ * are dropped; interior empties are kept (their position is meaningful).
+ */
+function isEmptyValue(v: unknown): boolean {
+	return v === '' || v === null || v === undefined;
+}
+
+function trimTrailingEmpty(arr: unknown[]): unknown[] {
+	let i = arr.length;
+	while (i > 0 && isEmptyValue(arr[i - 1])) i--;
+	return i === arr.length ? arr : arr.slice(0, i);
+}
+
+/**
+ * Recursively process X3 payload for display in n8n:
+ * - optionally trim trailing empty values from arrays (sparse dimensions)
+ * - optionally unwrap single-element arrays to their element
+ * Multi-element arrays with meaningful values stay as arrays.
+ */
+function reshapeX3Data(
+	value: unknown,
+	opts: { compact: boolean; trimEmpty: boolean },
+): unknown {
+	if (Array.isArray(value)) {
+		let mapped = value.map((v) => reshapeX3Data(v, opts));
+		if (opts.trimEmpty) mapped = trimTrailingEmpty(mapped);
+		return opts.compact && mapped.length === 1 ? mapped[0] : mapped;
+	}
+	if (value !== null && typeof value === 'object') {
+		const out: IDataObject = {};
+		for (const [k, v] of Object.entries(value as IDataObject)) {
+			out[k] = reshapeX3Data(v, opts) as IDataObject[keyof IDataObject];
+		}
+		return out;
+	}
+	return value;
+}
+
+// ---------------------------------------------------------------------------
+// SOAP envelope construction
+// ---------------------------------------------------------------------------
+
+function buildCallContext(ctx: CallContext): string {
+	return `<callContext xsi:type="wss:CAdxCallContext">
+			<codeLang xsi:type="xsd:string">${xmlEscape(ctx.codeLang)}</codeLang>
+			<poolAlias xsi:type="xsd:string">${xmlEscape(ctx.poolAlias)}</poolAlias>
+			<poolId xsi:type="xsd:string">${xmlEscape(ctx.poolId)}</poolId>
+			<requestConfig xsi:type="xsd:string">${xmlEscape(ctx.requestConfig)}</requestConfig>
+		</callContext>`;
+}
+
+/**
+ * Build the <PARAM><GRP ID="GRP1">...</GRP></PARAM> payload expected by XCHATX3OBJ.
+ *
+ * Layout choices below are not cosmetic: the X3 sub-program runs on an Apache Axis 1.4
+ * stack (2006) with a non-strict XML parser that, in practice, drops field values when
+ * the declaration is on its own line or when extra indentation surrounds <GRP>.
+ * Match SoapUI's exact byte layout: `<?xml ...?>` glued to <PARAM>, GRP flush-left,
+ * single-tab indentation on FLDs.
+ */
+function buildChatX3InputXml(args: {
+	object: string;
+	transaction: string;
+	action: string;
+	ident: string;
+	dataJson: string;
+}): string {
+	const { object, transaction, action, ident, dataJson } = args;
+	return `<?xml version="1.0" encoding="UTF-8"?><PARAM>
+<GRP ID="GRP1">
+	<FLD NAME="XOBJECT">${xmlEscape(object)}</FLD>
+	<FLD NAME="XTRANSACTION">${xmlEscape(transaction)}</FLD>
+	<FLD NAME="XACTION">${xmlEscape(action)}</FLD>
+	<FLD NAME="XIDENT">${xmlEscape(ident)}</FLD>
+	<FLD NAME="XDATAJSON">${xmlEscape(dataJson)}</FLD>
+	<FLD NAME="XRETURNJSON"></FLD>
+</GRP>
+</PARAM>`;
+}
+
+/**
+ * Wrap an inputXml payload in the SOAP envelope for the `run` operation.
+ */
+function buildRunEnvelope(ctx: CallContext, publicName: string, inputXml: string): string {
+	return `<soapenv:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:wss="http://www.adonix.com/WSS">
+	<soapenv:Header/>
+	<soapenv:Body>
+		<wss:run soapenv:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+			${buildCallContext(ctx)}
+			<publicName xsi:type="xsd:string">${xmlEscape(publicName)}</publicName>
+			<inputXml xsi:type="xsd:string">${wrapCdata(inputXml)}</inputXml>
+		</wss:run>
+	</soapenv:Body>
+</soapenv:Envelope>`;
+}
+
+// ---------------------------------------------------------------------------
+// Response parsing — turns SOAP+X3 result into clean n8n-friendly JSON
+// ---------------------------------------------------------------------------
+
+interface ParsedResponse {
+	status: number | undefined;
+	resultXml: string;
+	/** Parsed XDATAJSON — the actual X3 object payload (ITM0/ITM1/... blocks). */
+	dataJson: unknown;
+	/** Parsed XRETURNJSON — wrapper holding `success` + `messages[]`. */
+	returnJson: unknown;
+	/** Convenience: success flag lifted out of XRETURNJSON. */
+	xsuccess: boolean | undefined;
+	/** Convenience: messages array lifted out of XRETURNJSON. */
+	xmessages: unknown;
+	/** Convenience: trace lifted out of XRETURNJSON messages. */
+	xtrace: string | undefined;
+	soapMessages: IDataObject[];
+	/** Full <technicalInfos> block parsed into a flat object (numbers/booleans/strings). */
+	technicalInfos: IDataObject;
+	/**
+	 * X3 pool entry index that handled the call. Pass this back as `poolId` in subsequent
+	 * calls to keep the same X3 session — required when you want a READ to hold its lock
+	 * for a follow-up MODIFY.
+	 */
+	sessionId: string | undefined;
+}
+
+/**
+ * Parse a <technicalInfos> block into a flat object. Children with xsi:nil="true" are skipped.
+ * Numbers and booleans are coerced from their text representation.
+ */
+function parseTechnicalInfos(xml: string | undefined): IDataObject {
+	const result: IDataObject = {};
+	if (!xml) return result;
+	// Match every direct child element, capturing tag, attributes and inner text.
+	const childRe = /<(?:[\w.-]+:)?([\w.-]+)\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:[\w.-]+:)?\1>)/gi;
+	let m: RegExpExecArray | null;
+	while ((m = childRe.exec(xml)) !== null) {
+		const tag = m[1];
+		const attrs = m[2] ?? '';
+		const inner = m[3];
+		if (/\bxsi:nil="true"/.test(attrs)) continue;
+		if (inner === undefined) continue;
+		const raw = readTextContent(inner);
+		// Coerce to number/boolean based on the xsi:type hint when available.
+		const typeMatch = attrs.match(/xsi:type="(?:[\w.-]+:)?(\w+)"/);
+		const xsiType = typeMatch ? typeMatch[1] : '';
+		let value: unknown = raw;
+		if (xsiType === 'int' || xsiType === 'long' || xsiType === 'double' || xsiType === 'float') {
+			const n = Number(raw);
+			value = Number.isFinite(n) ? n : raw;
+		} else if (xsiType === 'boolean') {
+			value = raw === 'true';
+		}
+		result[tag] = value as IDataObject[keyof IDataObject];
+	}
+	return result;
+}
+
+function parseRunResponse(rawText: string): ParsedResponse {
+	// Multi-ref blocks live outside the response element, at the envelope body level.
+	const multiRefs = extractMultiRefs(rawText);
+
+	const responseInner = pickElement(rawText, 'runResponse') ?? rawText;
+	const returnInner = pickElement(responseInner, 'runReturn') ?? responseInner;
+
+	const statusRaw = pickElement(returnInner, 'status');
+	const status = statusRaw !== undefined ? Number(readTextContent(statusRaw)) : undefined;
+
+	// resultXml may be self-closing or carry xsi:nil="true" when X3 has nothing to return.
+	const resultXmlRaw = pickElement(returnInner, 'resultXml');
+	const resultXml = resultXmlRaw !== undefined ? readTextContent(resultXmlRaw) : '';
+
+	// XDATAJSON = the object payload (read result, or what was created/modified)
+	// XRETURNJSON = wrapper holding {success, messages:[{info|error|alert|trace}, ...]}
+	const dataJson = tryParseJson(pickResultField(resultXml, 'XDATAJSON'));
+	const returnJson = tryParseJson(pickResultField(resultXml, 'XRETURNJSON'));
+
+	let xsuccess: boolean | undefined;
+	let xmessages: unknown;
+	let xtrace: string | undefined;
+
+	if (returnJson && typeof returnJson === 'object' && !Array.isArray(returnJson)) {
+		const obj = returnJson as IDataObject;
+		if (typeof obj.success === 'boolean') xsuccess = obj.success;
+		if (Array.isArray(obj.messages)) {
+			xmessages = obj.messages;
+			const traceEntry = (obj.messages as IDataObject[]).find(
+				(m) => m !== null && typeof m === 'object' && typeof m.trace === 'string',
+			);
+			if (traceEntry) xtrace = traceEntry.trace as string;
+		}
+	}
+
+	const soapMessages = pickSoapMessages(returnInner, multiRefs);
+
+	const technicalInfosXml = pickElement(returnInner, 'technicalInfos');
+	const technicalInfos = parseTechnicalInfos(technicalInfosXml);
+
+	// X3 returns the pool entry index it used. Reusing it as poolId in subsequent calls
+	// pins the next request to the same X3 session, which is necessary to keep object
+	// locks alive between READ and MODIFY.
+	const poolEntryIdx = technicalInfos.poolEntryIdx;
+	const sessionId =
+		poolEntryIdx !== undefined && poolEntryIdx !== null && poolEntryIdx !== -1
+			? String(poolEntryIdx)
+			: undefined;
+
+	return {
+		status,
+		resultXml,
+		dataJson,
+		returnJson,
+		xsuccess,
+		xmessages,
+		xtrace,
+		soapMessages,
+		technicalInfos,
+		sessionId,
+	};
+}
+
+/**
+ * Normalize an X3 object operation response into the standard n8n output shape:
+ *   { success, status, action, object, ident, data, messages, trace }
+ *
+ * Lifts `messages` and `trace` from XRETURNJSON to the top level when present.
+ */
+function buildObjectOperationOutput(args: {
+	action: string;
+	object: string;
+	ident: string;
+	transaction: string;
+	parsed: ParsedResponse;
+	includeResultXml: boolean;
+	includeRaw: boolean;
+	reshapeOpts: { compact: boolean; trimEmpty: boolean };
+	raw: string;
+}): IDataObject {
+	const {
+		action,
+		object,
+		ident,
+		transaction,
+		parsed,
+		includeResultXml,
+		includeRaw,
+		reshapeOpts,
+		raw,
+	} = args;
+
+	// Prefer XRETURNJSON.success when present, fall back to status === 1.
+	const success = parsed.xsuccess ?? parsed.status === 1;
+
+	// Messages: from XRETURNJSON, or from SOAP-level messages when XRETURNJSON is empty.
+	let messages: unknown = parsed.xmessages;
+	if (
+		(messages === undefined || (Array.isArray(messages) && messages.length === 0)) &&
+		parsed.soapMessages.length > 0
+	) {
+		messages = parsed.soapMessages;
+	}
+
+	const output: IDataObject = {
+		success,
+		status: parsed.status,
+		action,
+		object,
+		ident,
+	};
+	if (transaction) output.transaction = transaction;
+	if (parsed.dataJson !== undefined) {
+		const data =
+			reshapeOpts.compact || reshapeOpts.trimEmpty
+				? reshapeX3Data(parsed.dataJson, reshapeOpts)
+				: parsed.dataJson;
+		output.data = data as IDataObject;
+	}
+	if (messages !== undefined) output.messages = messages as IDataObject;
+	if (parsed.xtrace !== undefined) output.trace = parsed.xtrace;
+	if (parsed.sessionId !== undefined) output.sessionId = parsed.sessionId;
+	if (Object.keys(parsed.technicalInfos).length > 0) output.technicalInfos = parsed.technicalInfos;
+	if (includeResultXml && parsed.resultXml) output.resultXml = parsed.resultXml;
+	if (includeRaw) output.raw = raw;
+
+	return output;
+}
+
+// ---------------------------------------------------------------------------
+// Node definition
+// ---------------------------------------------------------------------------
+
+export class Nx3Soap implements INodeType {
+	description: INodeTypeDescription = {
+		displayName: 'nX3 by IntellX',
+		name: 'nx3Soap',
+		icon: 'file:nx3.svg',
+		group: ['transform'],
+		version: 1,
+		subtitle:
+			'={{$parameter["operation"] + ": " + ($parameter["object"] || $parameter["publicName"]) + ($parameter["ident"] ? " (" + $parameter["ident"] + ")" : "")}}',
+		description:
+			'Read, create or modify a Sage X3 object via the XCHATX3OBJ sub-program (JSON in, JSON out)',
+		defaults: { name: 'nX3 by IntellX' },
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
+		usableAsTool: true,
+		credentials: [{ name: 'nx3SoapApi', required: true }],
+		properties: [
+			{
+				displayName: 'Operation',
+				name: 'operation',
+				type: 'options',
+				noDataExpression: true,
+				default: 'read',
+				options: [
+					{
+						name: 'Create X3 Object',
+						value: 'create',
+						description: 'Create a new X3 object from JSON data',
+						action: 'Create an X3 object',
+					},
+					{
+						name: 'Modify X3 Object',
+						value: 'modify',
+						description: 'Update an existing X3 object with JSON data',
+						action: 'Modify an X3 object',
+					},
+					{
+						name: 'Read X3 Object',
+						value: 'read',
+						description: 'Read an X3 object by its identifier',
+						action: 'Read an X3 object',
+					},
+					{
+						name: 'Run Sub-Program (Advanced)',
+						value: 'runRaw',
+						description: 'Call any X3 sub-program with raw input XML',
+						action: 'Run a sub program with raw xml',
+					},
+				],
+			},
+
+			// X3 Object operations -------------------------------------------------
+			{
+				displayName: 'X3 Object Code',
+				name: 'object',
+				type: 'string',
+				default: '',
+				required: true,
+				placeholder: 'ITM',
+				description: 'X3 object code (e.g. ITM, SOH, BPC)',
+				displayOptions: { show: { operation: ['read', 'create', 'modify'] } },
+			},
+			{
+				displayName: 'Transaction Code',
+				name: 'transaction',
+				type: 'string',
+				default: '',
+				placeholder: 'STD',
+				description: 'X3 transaction code (XTRANSACTION). Leave empty for default.',
+				displayOptions: { show: { operation: ['read', 'create', 'modify'] } },
+			},
+			{
+				displayName: 'Identifier',
+				name: 'ident',
+				type: 'string',
+				default: '',
+				required: true,
+				placeholder: 'BMS009',
+				description: 'Primary identifier of the object (XIDENT)',
+				displayOptions: { show: { operation: ['read', 'modify'] } },
+			},
+			{
+				displayName: 'Identifier',
+				name: 'ident',
+				type: 'string',
+				default: '',
+				placeholder: 'ASS001B',
+				description:
+					'Primary key (XIDENT) of the object to create. Must usually match the corresponding key field in the Data JSON (e.g. ITM0.ITMREF). Leave empty only if X3 auto-generates it for this object type.',
+				displayOptions: { show: { operation: ['create'] } },
+			},
+			{
+				displayName: 'Data (JSON)',
+				name: 'data',
+				type: 'json',
+				default: '{\n  "ITM0": {\n    "TSICOD": ["20"]\n  }\n}',
+				required: true,
+				description:
+					'JSON object with screen abbreviations and field values. All fields must be arrays (e.g. "TSICOD": ["20"]); use "TSICOD(1)":"20" to target a specific index. Dates: "YYYY-MM-DD". Empty values: "" / 0 / "0000-00-00".',
+				displayOptions: { show: { operation: ['create', 'modify'] } },
+			},
+
+			// Run Sub-Program (Advanced) -------------------------------------------
+			{
+				displayName: 'Public Name',
+				name: 'publicName',
+				type: 'string',
+				default: DEFAULT_PUBLIC_NAME,
+				required: true,
+				description: 'Name of the X3 web service / sub-program to call',
+				displayOptions: { show: { operation: ['runRaw'] } },
+			},
+			{
+				displayName: 'Input XML',
+				name: 'inputXml',
+				type: 'string',
+				typeOptions: { rows: 8 },
+				default: '',
+				required: true,
+				description: 'Raw XML payload passed to the sub-program (wrapped in CDATA automatically)',
+				displayOptions: { show: { operation: ['runRaw'] } },
+			},
+
+			// Shared advanced options ----------------------------------------------
+			{
+				displayName: 'Advanced Options',
+				name: 'advanced',
+				type: 'collection',
+				placeholder: 'Add option',
+				default: {},
+				options: [
+					{
+						displayName: 'Code Language Override',
+						name: 'codeLang',
+						type: 'string',
+						default: '',
+						description: 'Override the credential codeLang for this call',
+					},
+					{
+						displayName: 'Compact Single-Value Arrays',
+						name: 'compactArrays',
+						type: 'boolean',
+						default: true,
+						description:
+							'Whether to unwrap single-element arrays in the data output (e.g. ["Iconext"] becomes "Iconext"). Multi-value arrays are kept untouched. Improves readability and lets you reference values without the [0] suffix in downstream expressions.',
+					},
+					{
+						displayName: 'Include Raw SOAP Response',
+						name: 'includeRaw',
+						type: 'boolean',
+						default: false,
+						description: 'Whether to include the full SOAP response body in the output',
+					},
+					{
+						displayName: 'Include Request in Output',
+						name: 'includeRequest',
+						type: 'boolean',
+						default: false,
+						description:
+							'Whether to include the SOAP envelope and X3 input XML that were sent, useful for debugging',
+					},
+					{
+						displayName: 'Include resultXml in Output',
+						name: 'includeResultXml',
+						type: 'boolean',
+						default: false,
+						description: 'Whether to include the raw resultXml returned by X3 in the output',
+					},
+					{
+						displayName: 'Pool Alias Override',
+						name: 'poolAlias',
+						type: 'string',
+						default: '',
+						description: 'Override the credential poolAlias for this call',
+					},
+					{
+						displayName: 'Pool ID Override',
+						name: 'poolId',
+						type: 'string',
+						default: '',
+						description: 'Override the credential poolId. Set this to the previous call\'s `sessionId` (e.g. ={{$JSON.sessionId}}) to keep the same X3 session — needed when chaining READ → MODIFY to preserve the X3 lock on the object.',
+					},
+					{
+						displayName: 'Public Name Override',
+						name: 'publicName',
+						type: 'string',
+						default: DEFAULT_PUBLIC_NAME,
+						description: 'Override the X3 sub-program used by Read/Create/Modify',
+					},
+					{
+						displayName: 'Trim Trailing Empty Values',
+						name: 'trimEmpty',
+						type: 'boolean',
+						default: true,
+						description:
+							'Whether to drop empty values at the end of arrays. X3 pads dimensioned fields up to their max size — e.g. "CCE": ["PEND-001","","","","",""] becomes ["PEND-001"], then "PEND-001" if Compact is also on. Interior empty values are preserved.',
+					},
+				],
+			},
+		],
+	};
+
+	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
+		const items = this.getInputData();
+		const returnData: INodeExecutionData[] = [];
+
+		const credentials = await this.getCredentials('nx3SoapApi');
+		const baseUrl = String(credentials.baseUrl ?? '').replace(/\/+$/, '');
+		const allowSelfSigned = Boolean(credentials.allowSelfSigned);
+		const defaultCtx: CallContext = {
+			codeLang: String(credentials.codeLang ?? 'FRA'),
+			poolAlias: String(credentials.poolAlias ?? ''),
+			poolId: String(credentials.poolId ?? ''),
+			requestConfig: String(credentials.requestConfig ?? ''),
+		};
+
+		for (let i = 0; i < items.length; i++) {
+			try {
+				const operation = this.getNodeParameter('operation', i) as Operation;
+				const advanced = this.getNodeParameter('advanced', i, {}) as IDataObject;
+
+				// Effective call context (credential defaults + per-call overrides)
+				const ctx: CallContext = { ...defaultCtx };
+				for (const k of ['codeLang', 'poolAlias', 'poolId'] as const) {
+					const v = advanced[k];
+					if (typeof v === 'string' && v !== '') ctx[k] = v;
+				}
+
+				const includeResultXml = Boolean(advanced.includeResultXml);
+				const includeRaw = Boolean(advanced.includeRaw);
+				const includeRequest = Boolean(advanced.includeRequest);
+				// Default true: compact single-value arrays for readability. Pass advanced.compactArrays
+				// explicitly only when set (n8n collections may omit unset values).
+				const compactArrays =
+					advanced.compactArrays === undefined ? true : Boolean(advanced.compactArrays);
+				const trimEmpty =
+					advanced.trimEmpty === undefined ? true : Boolean(advanced.trimEmpty);
+				const reshapeOpts = { compact: compactArrays, trimEmpty };
+
+				let envelope: string;
+				let inputXmlSent: string;
+				let metaForOutput:
+					| { kind: 'object'; action: string; object: string; ident: string; transaction: string }
+					| { kind: 'raw'; publicName: string };
+
+				if (operation === 'runRaw') {
+					const publicName = this.getNodeParameter('publicName', i) as string;
+					inputXmlSent = this.getNodeParameter('inputXml', i) as string;
+					envelope = buildRunEnvelope(ctx, publicName, inputXmlSent);
+					metaForOutput = { kind: 'raw', publicName };
+				} else {
+					const object = (this.getNodeParameter('object', i) as string).trim();
+					const ident = (this.getNodeParameter('ident', i, '') as string).trim();
+					const transaction = (this.getNodeParameter('transaction', i, '') as string).trim();
+					const action = ACTION_MAP[operation];
+
+					if (!object) {
+						throw new NodeOperationError(this.getNode(), 'X3 Object Code is required', {
+							itemIndex: i,
+						});
+					}
+					if ((operation === 'read' || operation === 'modify') && !ident) {
+						throw new NodeOperationError(this.getNode(), 'Identifier is required for Read/Modify', {
+							itemIndex: i,
+						});
+					}
+
+					let dataJsonString = '';
+					if (operation === 'create' || operation === 'modify') {
+						const rawData = this.getNodeParameter('data', i, '{}');
+						let parsed: unknown;
+						if (typeof rawData === 'string') {
+							try {
+								parsed = JSON.parse(rawData);
+							} catch (e) {
+								throw new NodeOperationError(
+									this.getNode(),
+									`Data field is not valid JSON: ${(e as Error).message}`,
+									{ itemIndex: i },
+								);
+							}
+						} else {
+							parsed = rawData;
+						}
+						// Compact form (no whitespace/newlines) — matches what SoapUI sends and
+						// avoids confusing X3's payload parser when entity-encoded whitespace would
+						// leak through (&#x0a; etc.).
+						dataJsonString = JSON.stringify(parsed);
+					}
+
+					const publicName =
+						typeof advanced.publicName === 'string' && advanced.publicName !== ''
+							? advanced.publicName
+							: DEFAULT_PUBLIC_NAME;
+
+					inputXmlSent = buildChatX3InputXml({
+						object,
+						transaction,
+						action,
+						ident,
+						dataJson: dataJsonString,
+					});
+
+					envelope = buildRunEnvelope(ctx, publicName, inputXmlSent);
+					metaForOutput = { kind: 'object', action, object, ident, transaction };
+				}
+
+				const requestOptions: IHttpRequestOptions = {
+					method: 'POST',
+					url: `${baseUrl}${SOAP_PATH}`,
+					headers: {
+						'Content-Type': 'text/xml; charset=utf-8',
+						SOAPAction: '""',
+					},
+					body: envelope,
+					returnFullResponse: false,
+					skipSslCertificateValidation: allowSelfSigned,
+				};
+
+				const response = (await this.helpers.httpRequestWithAuthentication.call(
+					this,
+					'nx3SoapApi',
+					requestOptions,
+				)) as string | Buffer;
+
+				const rawText =
+					typeof response === 'string'
+						? response
+						: Buffer.isBuffer(response)
+							? response.toString('utf8')
+							: String(response);
+
+				const parsed = parseRunResponse(rawText);
+
+				let output: IDataObject;
+				if (metaForOutput.kind === 'object') {
+					output = buildObjectOperationOutput({
+						action: metaForOutput.action,
+						object: metaForOutput.object,
+						ident: metaForOutput.ident,
+						transaction: metaForOutput.transaction,
+						parsed,
+						includeResultXml,
+						includeRaw,
+						reshapeOpts,
+						raw: rawText,
+					});
+				} else {
+					output = {
+						success: parsed.xsuccess ?? parsed.status === 1,
+						status: parsed.status,
+						publicName: metaForOutput.publicName,
+					};
+					if (parsed.dataJson !== undefined) {
+						const data =
+							reshapeOpts.compact || reshapeOpts.trimEmpty
+								? reshapeX3Data(parsed.dataJson, reshapeOpts)
+								: parsed.dataJson;
+						output.data = data as IDataObject;
+					}
+					if (parsed.xmessages !== undefined) output.messages = parsed.xmessages as IDataObject;
+					else if (parsed.soapMessages.length > 0) output.messages = parsed.soapMessages;
+					if (parsed.xtrace !== undefined) output.trace = parsed.xtrace;
+					if (parsed.sessionId !== undefined) output.sessionId = parsed.sessionId;
+					if (Object.keys(parsed.technicalInfos).length > 0)
+						output.technicalInfos = parsed.technicalInfos;
+					if (includeResultXml && parsed.resultXml) output.resultXml = parsed.resultXml;
+					if (includeRaw) output.raw = rawText;
+				}
+
+				if (includeRequest) {
+					output.request = {
+						inputXml: inputXmlSent,
+						envelope,
+					};
+				}
+
+				returnData.push({ json: output, pairedItem: i });
+			} catch (error) {
+				if (this.continueOnFail()) {
+					returnData.push({
+						json: { error: (error as Error).message },
+						pairedItem: i,
+					});
+					continue;
+				}
+				throw new NodeApiError(this.getNode(), error as JsonObject, { itemIndex: i });
+			}
+		}
+
+		return [returnData];
+	}
+}

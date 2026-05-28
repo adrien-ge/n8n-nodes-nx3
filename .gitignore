@@ -1,2 +1,6 @@
 dist
 node_modules
+_backup
+.DS_Store
+**/.DS_Store
+.claude
