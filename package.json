@@ -3,7 +3,7 @@
 	"version": "0.1.0",
 	"description": "n8n community node to read, create and modify Sage X3 objects via the CAdxWebServiceXmlCC SOAP service (JSON in, JSON out)",
 	"license": "MIT",
-	"homepage": "https://github.com/adrien-ge/n8n#readme",
+	"homepage": "https://github.com/adrien-ge/n8n-nodes-nx3#readme",
 	"keywords": [
 		"n8n-community-node-package",
 		"n8n",
@@ -21,7 +21,7 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/adrien-ge/n8n.git"
+		"url": "https://github.com/adrien-ge/n8n-nodes-nx3.git"
 	},
 	"scripts": {
 		"build": "n8n-node build",

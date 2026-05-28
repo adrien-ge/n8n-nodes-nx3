@@ -6,12 +6,12 @@
 	"resources": {
 		"credentialDocumentation": [
 			{
-				"url": "https://github.com/adrien-ge/n8n#credentials"
+				"url": "https://github.com/adrien-ge/n8n-nodes-nx3#credentials"
 			}
 		],
 		"primaryDocumentation": [
 			{
-				"url": "https://github.com/adrien-ge/n8n#readme"
+				"url": "https://github.com/adrien-ge/n8n-nodes-nx3#readme"
 			}
 		]
 	},
