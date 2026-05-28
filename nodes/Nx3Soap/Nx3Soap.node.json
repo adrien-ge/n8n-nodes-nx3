@@ -1,0 +1,19 @@
+{
+	"node": "n8n-nodes-nx3.nx3Soap",
+	"nodeVersion": "1.0",
+	"codexVersion": "1.0",
+	"categories": ["Productivity", "Development"],
+	"resources": {
+		"credentialDocumentation": [
+			{
+				"url": "https://github.com/adrien-ge/n8n#credentials"
+			}
+		],
+		"primaryDocumentation": [
+			{
+				"url": "https://github.com/adrien-ge/n8n#readme"
+			}
+		]
+	},
+	"alias": ["Sage", "X3", "Sage X3", "ERP", "SOAP", "Adonix", "XCHATX3OBJ"]
+}

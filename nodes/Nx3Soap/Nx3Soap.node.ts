@@ -188,6 +188,47 @@ function tryParseJson(s: string | undefined): unknown {
 }
 
 /**
+ * Recursively parse any string value that is itself a JSON object/array. X3 nests JSON
+ * inside Clob string fields (e.g. XDATAJSON), so this turns the debug "request" object
+ * into a fully navigable tree instead of a wall of escaped quotes.
+ */
+function deepParseJsonStrings(value: unknown): unknown {
+	if (typeof value === 'string') {
+		const t = value.trim();
+		if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+			try {
+				return deepParseJsonStrings(JSON.parse(t));
+			} catch {
+				return value;
+			}
+		}
+		return value;
+	}
+	if (Array.isArray(value)) return value.map(deepParseJsonStrings);
+	if (value !== null && typeof value === 'object') {
+		const out: IDataObject = {};
+		for (const [k, v] of Object.entries(value as IDataObject)) {
+			out[k] = deepParseJsonStrings(v) as IDataObject[keyof IDataObject];
+		}
+		return out;
+	}
+	return value;
+}
+
+/**
+ * Shape the resultXml for the debug output: if X3 returned JSON, expose it as a navigable
+ * object with nested Clob JSON fields parsed; if it returned XML, keep the raw string.
+ */
+function debugResult(resultXml: string): unknown {
+	const t = resultXml.trim();
+	if (t.startsWith('{') || t.startsWith('[')) {
+		const parsed = tryParseJson(t);
+		if (parsed && typeof parsed === 'object') return deepParseJsonStrings(parsed);
+	}
+	return resultXml;
+}
+
+/**
  * Drop trailing empty values from an array. X3 returns dimensioned fields with every
  * "slot" filled, even unused ones — e.g. `"CCE": ["PEND-001","","","","",""]` is really
  * a 1-value array padded to the field's max dimension. Trailing "" / null / undefined
@@ -242,15 +283,12 @@ function buildCallContext(ctx: CallContext): string {
 }
 
 /**
- * Build the <PARAM><GRP ID="GRP1">...</GRP></PARAM> payload expected by XCHATX3OBJ.
- *
- * Layout choices below are not cosmetic: the X3 sub-program runs on an Apache Axis 1.4
- * stack (2006) with a non-strict XML parser that, in practice, drops field values when
- * the declaration is on its own line or when extra indentation surrounds <GRP>.
- * Match SoapUI's exact byte layout: `<?xml ...?>` glued to <PARAM>, GRP flush-left,
- * single-tab indentation on FLDs.
+ * Build the JSON payload accepted natively by X3 when requestConfig carries
+ * adxwss.optreturn=JSON. Despite the `inputXml` parameter name, X3 accepts a pure JSON
+ * object whose keys are the web service blocks (GRP1) and fields. XDATAJSON stays a
+ * stringified JSON value, matching its Clob type.
  */
-function buildChatX3InputXml(args: {
+function buildChatX3InputJson(args: {
 	object: string;
 	transaction: string;
 	action: string;
@@ -258,16 +296,23 @@ function buildChatX3InputXml(args: {
 	dataJson: string;
 }): string {
 	const { object, transaction, action, ident, dataJson } = args;
-	return `<?xml version="1.0" encoding="UTF-8"?><PARAM>
-<GRP ID="GRP1">
-	<FLD NAME="XOBJECT">${xmlEscape(object)}</FLD>
-	<FLD NAME="XTRANSACTION">${xmlEscape(transaction)}</FLD>
-	<FLD NAME="XACTION">${xmlEscape(action)}</FLD>
-	<FLD NAME="XIDENT">${xmlEscape(ident)}</FLD>
-	<FLD NAME="XDATAJSON">${xmlEscape(dataJson)}</FLD>
-	<FLD NAME="XRETURNJSON"></FLD>
-</GRP>
-</PARAM>`;
+	return JSON.stringify({
+		GRP1: {
+			XOBJECT: object,
+			XTRANSACTION: transaction,
+			XACTION: action,
+			XIDENT: ident,
+			XDATAJSON: dataJson,
+			XRETURNJSON: '',
+		},
+	});
+}
+
+/** Merge the adxwss JSON-mode flags into an existing requestConfig string. */
+function withJsonRequestConfig(existing: string): string {
+	const flags = 'adxwss.optreturn=JSON&adxwss.beautify=true';
+	if (!existing) return flags;
+	return existing.includes('adxwss.optreturn') ? existing : `${existing}&${flags}`;
 }
 
 /**
@@ -346,6 +391,32 @@ function parseTechnicalInfos(xml: string | undefined): IDataObject {
 	return result;
 }
 
+/**
+ * Extract XDATAJSON and XRETURNJSON from a resultXml payload, auto-detecting whether X3
+ * returned XML (`<RESULT><GRP><FLD NAME="...">`) or JSON (`{"GRP1":{"XDATAJSON":"..."}}`,
+ * produced when requestConfig has adxwss.optreturn=JSON). Both fields stay stringified
+ * JSON in either mode, so they get a second parse pass.
+ */
+function extractResultFields(resultXml: string): { dataJson: unknown; returnJson: unknown } {
+	const trimmed = resultXml.trim();
+	if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+		try {
+			const obj = JSON.parse(trimmed) as IDataObject;
+			const grp = (obj.GRP1 ?? obj) as IDataObject;
+			return {
+				dataJson: tryParseJson(grp.XDATAJSON as string | undefined),
+				returnJson: tryParseJson(grp.XRETURNJSON as string | undefined),
+			};
+		} catch {
+			// Not valid JSON after all — fall through to XML extraction.
+		}
+	}
+	return {
+		dataJson: tryParseJson(pickResultField(resultXml, 'XDATAJSON')),
+		returnJson: tryParseJson(pickResultField(resultXml, 'XRETURNJSON')),
+	};
+}
+
 function parseRunResponse(rawText: string): ParsedResponse {
 	// Multi-ref blocks live outside the response element, at the envelope body level.
 	const multiRefs = extractMultiRefs(rawText);
@@ -362,8 +433,8 @@ function parseRunResponse(rawText: string): ParsedResponse {
 
 	// XDATAJSON = the object payload (read result, or what was created/modified)
 	// XRETURNJSON = wrapper holding {success, messages:[{info|error|alert|trace}, ...]}
-	const dataJson = tryParseJson(pickResultField(resultXml, 'XDATAJSON'));
-	const returnJson = tryParseJson(pickResultField(resultXml, 'XRETURNJSON'));
+	// Works whether X3 returned XML or native JSON (adxwss.optreturn=JSON).
+	const { dataJson, returnJson } = extractResultFields(resultXml);
 
 	let xsuccess: boolean | undefined;
 	let xmessages: unknown;
@@ -469,7 +540,7 @@ function buildObjectOperationOutput(args: {
 	if (parsed.xtrace !== undefined) output.trace = parsed.xtrace;
 	if (parsed.sessionId !== undefined) output.sessionId = parsed.sessionId;
 	if (Object.keys(parsed.technicalInfos).length > 0) output.technicalInfos = parsed.technicalInfos;
-	if (includeResultXml && parsed.resultXml) output.resultXml = parsed.resultXml;
+	if (includeResultXml && parsed.resultXml) output.result = debugResult(parsed.resultXml) as IDataObject;
 	if (includeRaw) output.raw = raw;
 
 	return output;
@@ -641,11 +712,12 @@ export class Nx3Soap implements INodeType {
 							'Whether to include the SOAP envelope and X3 input XML that were sent, useful for debugging',
 					},
 					{
-						displayName: 'Include resultXml in Output',
+						displayName: 'Include Result in Output',
 						name: 'includeResultXml',
 						type: 'boolean',
 						default: false,
-						description: 'Whether to include the raw resultXml returned by X3 in the output',
+						description:
+							'Whether to include the parsed X3 result payload (the resultXml content, navigable) in the output under the "result" key',
 					},
 					{
 						displayName: 'Pool Alias Override',
@@ -718,6 +790,9 @@ export class Nx3Soap implements INodeType {
 					advanced.trimEmpty === undefined ? true : Boolean(advanced.trimEmpty);
 				const reshapeOpts = { compact: compactArrays, trimEmpty };
 
+				// X3 native JSON mode is the only mode: always ask X3 to answer in JSON.
+				ctx.requestConfig = withJsonRequestConfig(ctx.requestConfig);
+
 				let envelope: string;
 				let inputXmlSent: string;
 				let metaForOutput:
@@ -774,7 +849,7 @@ export class Nx3Soap implements INodeType {
 							? advanced.publicName
 							: DEFAULT_PUBLIC_NAME;
 
-					inputXmlSent = buildChatX3InputXml({
+					inputXmlSent = buildChatX3InputJson({
 						object,
 						transaction,
 						action,
@@ -845,13 +920,20 @@ export class Nx3Soap implements INodeType {
 					if (parsed.sessionId !== undefined) output.sessionId = parsed.sessionId;
 					if (Object.keys(parsed.technicalInfos).length > 0)
 						output.technicalInfos = parsed.technicalInfos;
-					if (includeResultXml && parsed.resultXml) output.resultXml = parsed.resultXml;
+					if (includeResultXml && parsed.resultXml) output.result = debugResult(parsed.resultXml) as IDataObject;
 					if (includeRaw) output.raw = rawText;
 				}
 
 				if (includeRequest) {
+					// Expose the payload as a navigable object (XDATAJSON parsed too) when it is JSON,
+					// else keep the raw string (e.g. XML mode or runRaw). Envelope stays raw (transport).
+					const parsedInput = tryParseJson(inputXmlSent);
+					const input =
+						parsedInput && typeof parsedInput === 'object'
+							? deepParseJsonStrings(parsedInput)
+							: inputXmlSent;
 					output.request = {
-						inputXml: inputXmlSent,
+						input: input as IDataObject,
 						envelope,
 					};
 				}

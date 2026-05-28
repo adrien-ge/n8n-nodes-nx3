@@ -1,11 +1,19 @@
 {
 	"name": "n8n-nodes-nx3",
 	"version": "0.1.0",
-	"description": "Custom n8n node for the Sage X3 CAdxWebServiceXmlCC SOAP service",
+	"description": "n8n community node to read, create and modify Sage X3 objects via the CAdxWebServiceXmlCC SOAP service (JSON in, JSON out)",
 	"license": "MIT",
-	"homepage": "",
+	"homepage": "https://github.com/adrien-ge/n8n#readme",
 	"keywords": [
-		"n8n-community-node-package"
+		"n8n-community-node-package",
+		"n8n",
+		"sage",
+		"sage-x3",
+		"x3",
+		"erp",
+		"soap",
+		"adonix",
+		"syracuse"
 	],
 	"author": {
 		"name": "Adrien Geraldes",
