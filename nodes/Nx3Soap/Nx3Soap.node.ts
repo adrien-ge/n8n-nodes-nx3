@@ -552,7 +552,7 @@ function buildObjectOperationOutput(args: {
 
 export class Nx3Soap implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'nX3 by IntellX',
+		displayName: 'nX3 by IntellX for Sage X3',
 		name: 'nx3Soap',
 		icon: 'file:nx3.svg',
 		group: ['transform'],
@@ -561,7 +561,7 @@ export class Nx3Soap implements INodeType {
 			'={{$parameter["operation"] + ": " + ($parameter["object"] || $parameter["publicName"]) + ($parameter["ident"] ? " (" + $parameter["ident"] + ")" : "")}}',
 		description:
 			'Read, create or modify a Sage X3 object via the XCHATX3OBJ sub-program (JSON in, JSON out)',
-		defaults: { name: 'nX3 by IntellX' },
+		defaults: { name: 'nX3 by IntellX for Sage X3' },
 		inputs: [NodeConnectionTypes.Main],
 		outputs: [NodeConnectionTypes.Main],
 		usableAsTool: true,
@@ -575,27 +575,27 @@ export class Nx3Soap implements INodeType {
 				default: 'read',
 				options: [
 					{
-						name: 'Create X3 Object',
+						name: 'Create Sage X3 Object',
 						value: 'create',
-						description: 'Create a new X3 object from JSON data',
+						description: 'Create a new Sage X3 object from JSON data',
 						action: 'Create an X3 object',
 					},
 					{
-						name: 'Modify X3 Object',
+						name: 'Modify Sage X3 Object',
 						value: 'modify',
-						description: 'Update an existing X3 object with JSON data',
+						description: 'Update an existing Sage X3 object with JSON data',
 						action: 'Modify an X3 object',
 					},
 					{
-						name: 'Read X3 Object',
+						name: 'Read Sage X3 Object',
 						value: 'read',
-						description: 'Read an X3 object by its identifier',
+						description: 'Read a Sage X3 object by its identifier',
 						action: 'Read an X3 object',
 					},
 					{
 						name: 'Run Sub-Program (Advanced)',
 						value: 'runRaw',
-						description: 'Call any X3 sub-program with raw input XML',
+						description: 'Call any Sage X3 sub-program with raw input XML',
 						action: 'Run a sub program with raw xml',
 					},
 				],
@@ -603,13 +603,13 @@ export class Nx3Soap implements INodeType {
 
 			// X3 Object operations -------------------------------------------------
 			{
-				displayName: 'X3 Object Code',
+				displayName: 'Sage X3 Object Code',
 				name: 'object',
 				type: 'string',
 				default: '',
 				required: true,
 				placeholder: 'ITM',
-				description: 'X3 object code (e.g. ITM, SOH, BPC)',
+				description: 'Sage X3 object code (e.g. ITM, SOH, BPC)',
 				displayOptions: { show: { operation: ['read', 'create', 'modify'] } },
 			},
 			{
@@ -618,7 +618,7 @@ export class Nx3Soap implements INodeType {
 				type: 'string',
 				default: '',
 				placeholder: 'STD',
-				description: 'X3 transaction code (XTRANSACTION). Leave empty for default.',
+				description: 'Sage X3 transaction code (XTRANSACTION). Leave empty for default.',
 				displayOptions: { show: { operation: ['read', 'create', 'modify'] } },
 			},
 			{
@@ -638,7 +638,7 @@ export class Nx3Soap implements INodeType {
 				default: '',
 				placeholder: 'ASS001B',
 				description:
-					'Primary key (XIDENT) of the object to create. Must usually match the corresponding key field in the Data JSON (e.g. ITM0.ITMREF). Leave empty only if X3 auto-generates it for this object type.',
+					'Primary key (XIDENT) of the object to create. Must usually match the corresponding key field in the Data JSON (e.g. ITM0.ITMREF). Leave empty only if Sage X3 auto-generates it for this object type.',
 				displayOptions: { show: { operation: ['create'] } },
 			},
 			{
@@ -659,7 +659,7 @@ export class Nx3Soap implements INodeType {
 				type: 'string',
 				default: DEFAULT_PUBLIC_NAME,
 				required: true,
-				description: 'Name of the X3 web service / sub-program to call',
+				description: 'Name of the Sage X3 web service / sub-program to call',
 				displayOptions: { show: { operation: ['runRaw'] } },
 			},
 			{
@@ -731,14 +731,14 @@ export class Nx3Soap implements INodeType {
 						name: 'poolId',
 						type: 'string',
 						default: '',
-						description: 'Override the credential poolId. Set this to the previous call\'s `sessionId` (e.g. ={{$JSON.sessionId}}) to keep the same X3 session — needed when chaining READ → MODIFY to preserve the X3 lock on the object.',
+						description: 'Override the credential poolId. Set this to the previous call\'s `sessionId` (e.g. ={{$JSON.sessionId}}) to keep the same Sage X3 session — needed when chaining READ → MODIFY to preserve the Sage X3 lock on the object.',
 					},
 					{
 						displayName: 'Public Name Override',
 						name: 'publicName',
 						type: 'string',
 						default: DEFAULT_PUBLIC_NAME,
-						description: 'Override the X3 sub-program used by Read/Create/Modify',
+						description: 'Override the Sage X3 sub-program used by Read/Create/Modify',
 					},
 					{
 						displayName: 'Trim Trailing Empty Values',

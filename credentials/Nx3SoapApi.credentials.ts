@@ -15,7 +15,7 @@ import type {
 export class Nx3SoapApi implements ICredentialType {
 	name = 'nx3SoapApi';
 
-	displayName = 'nX3 by IntellX API';
+	displayName = 'nX3 by IntellX for Sage X3 API';
 
 	icon: Icon = 'file:nx3.svg';
 
