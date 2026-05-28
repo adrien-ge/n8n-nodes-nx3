@@ -552,7 +552,7 @@ function buildObjectOperationOutput(args: {
 
 export class Nx3Soap implements INodeType {
 	description: INodeTypeDescription = {
-		displayName: 'nX3 by IntellX for Sage X3',
+		displayName: 'IntellX for Sage X3',
 		name: 'nx3Soap',
 		icon: 'file:nx3.svg',
 		group: ['transform'],
@@ -561,7 +561,7 @@ export class Nx3Soap implements INodeType {
 			'={{$parameter["operation"] + ": " + ($parameter["object"] || $parameter["publicName"]) + ($parameter["ident"] ? " (" + $parameter["ident"] + ")" : "")}}',
 		description:
 			'Read, create or modify a Sage X3 object via the XCHATX3OBJ sub-program (JSON in, JSON out)',
-		defaults: { name: 'nX3 by IntellX for Sage X3' },
+		defaults: { name: 'IntellX for Sage X3' },
 		inputs: [NodeConnectionTypes.Main],
 		outputs: [NodeConnectionTypes.Main],
 		usableAsTool: true,
