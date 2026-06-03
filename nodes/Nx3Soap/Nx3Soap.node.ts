@@ -3,6 +3,7 @@ import type {
 	IExecuteFunctions,
 	IHttpRequestOptions,
 	INodeExecutionData,
+	INodeProperties,
 	INodeType,
 	INodeTypeDescription,
 	JsonObject,
@@ -30,6 +31,35 @@ const ACTION_MAP: Record<Exclude<Operation, 'runRaw' | 'custom'>, string> = {
 const X3_OBJECT_OPS: string[] = ['read', 'list', 'create', 'modify', 'custom'];
 // Subset whose XDATAJSON payload is meaningful (Read sends an empty payload).
 const X3_OPS_WITH_DATA: string[] = ['list', 'create', 'modify', 'custom'];
+
+// One Action Code field per built-in operation, each pre-filled with the matching XACTION.
+// The Operation dropdown thus seeds the field with the right default (acting as a shortcut),
+// while the user can still edit the value to send a different action.
+const ACTION_CODE_PRESET_FIELDS: INodeProperties[] = (
+	Object.entries(ACTION_MAP) as Array<[keyof typeof ACTION_MAP, string]>
+).map(([op, xaction]) => ({
+	displayName: 'Action Code',
+	name: 'actionCode',
+	type: 'string',
+	default: xaction,
+	placeholder: xaction,
+	description:
+		'XACTION sent to the sub-program. Pre-filled from the Operation above; edit to send a different action.',
+	displayOptions: { show: { operation: [op] } },
+}));
+
+// Custom Action has no preset, so the field is required and starts empty.
+const ACTION_CODE_CUSTOM_FIELD: INodeProperties = {
+	displayName: 'Action Code',
+	name: 'actionCode',
+	type: 'string',
+	default: '',
+	required: true,
+	placeholder: 'LIST',
+	description:
+		'XACTION sent to the sub-program. Required for Custom Action (no preset to fall back on). Will be upper-cased.',
+	displayOptions: { show: { operation: ['custom'] } },
+};
 
 interface CallContext {
 	codeLang: string;
@@ -622,16 +652,10 @@ export class Nx3Soap implements INodeType {
 			},
 
 			// X3 Object operations -------------------------------------------------
-			{
-				displayName: 'Action Code',
-				name: 'actionCode',
-				type: 'string',
-				default: '',
-				placeholder: 'READ',
-				description:
-					'XACTION value sent to the sub-program. Leave empty to use the value implied by the Operation above (READ / LIST / CREATE / MODIFY). Required when Operation is "Custom". Always upper-cased.',
-				displayOptions: { show: { operation: X3_OBJECT_OPS } },
-			},
+			// Per-operation Action Code fields (generated above): each shows the right
+			// pre-filled XACTION as the user changes the Operation dropdown.
+			...ACTION_CODE_PRESET_FIELDS,
+			ACTION_CODE_CUSTOM_FIELD,
 			{
 				displayName: 'Sage X3 Object Code',
 				name: 'object',
