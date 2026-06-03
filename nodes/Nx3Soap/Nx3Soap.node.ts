@@ -15,11 +15,13 @@ const SOAP_PATH = '/soap-generic/syracuse/collaboration/syracuse/CAdxWebServiceX
 // Default X3 sub-program implementing the JSON-driven object API (patch ChatX3).
 const DEFAULT_PUBLIC_NAME = 'XCHATX3OBJ';
 
-type Operation = 'read' | 'create' | 'modify' | 'runRaw';
+type Operation = 'read' | 'list' | 'create' | 'modify' | 'custom' | 'runRaw';
 
-// Map UI operation → XACTION value sent in the X3 inputXml.
-const ACTION_MAP: Record<Exclude<Operation, 'runRaw'>, string> = {
+// Built-in XACTION values. `custom` reads the value from a free-text field at runtime,
+// `runRaw` builds its own input payload, so neither appear in the map.
+const ACTION_MAP: Record<Exclude<Operation, 'runRaw' | 'custom'>, string> = {
 	read: 'READ',
+	list: 'LIST',
 	create: 'CREATE',
 	modify: 'MODIFY',
 };
@@ -581,6 +583,19 @@ export class Nx3Soap implements INodeType {
 						action: 'Create an X3 object',
 					},
 					{
+						name: 'Custom Sage X3 Action',
+						value: 'custom',
+						description:
+							'Send any XACTION value to the sub-program (e.g. LIST or future actions not listed here)',
+						action: 'Run a custom X3 action',
+					},
+					{
+						name: 'List Sage X3 Objects',
+						value: 'list',
+						description: 'List records of a Sage X3 object with optional filter criteria',
+						action: 'List X3 objects',
+					},
+					{
 						name: 'Modify Sage X3 Object',
 						value: 'modify',
 						description: 'Update an existing Sage X3 object with JSON data',
@@ -603,6 +618,17 @@ export class Nx3Soap implements INodeType {
 
 			// X3 Object operations -------------------------------------------------
 			{
+				displayName: 'Action Code',
+				name: 'actionCode',
+				type: 'string',
+				default: '',
+				required: true,
+				placeholder: 'LIST',
+				description:
+					'XACTION value sent to the sub-program (e.g. LIST, or any custom action the X3 patch exposes). Will be upper-cased.',
+				displayOptions: { show: { operation: ['custom'] } },
+			},
+			{
 				displayName: 'Sage X3 Object Code',
 				name: 'object',
 				type: 'string',
@@ -610,7 +636,7 @@ export class Nx3Soap implements INodeType {
 				required: true,
 				placeholder: 'ITM',
 				description: 'Sage X3 object code (e.g. ITM, SOH, BPC)',
-				displayOptions: { show: { operation: ['read', 'create', 'modify'] } },
+				displayOptions: { show: { operation: ['read', 'list', 'create', 'modify', 'custom'] } },
 			},
 			{
 				displayName: 'Transaction Code',
@@ -619,7 +645,7 @@ export class Nx3Soap implements INodeType {
 				default: '',
 				placeholder: 'STD',
 				description: 'Sage X3 transaction code (XTRANSACTION). Leave empty for default.',
-				displayOptions: { show: { operation: ['read', 'create', 'modify'] } },
+				displayOptions: { show: { operation: ['read', 'list', 'create', 'modify', 'custom'] } },
 			},
 			{
 				displayName: 'Identifier',
@@ -638,8 +664,8 @@ export class Nx3Soap implements INodeType {
 				default: '',
 				placeholder: 'ASS001B',
 				description:
-					'Primary key (XIDENT) of the object to create. Must usually match the corresponding key field in the Data JSON (e.g. ITM0.ITMREF). Leave empty only if Sage X3 auto-generates it for this object type.',
-				displayOptions: { show: { operation: ['create'] } },
+					'Primary key (XIDENT). For Create, this must usually match the key field in the Data JSON (e.g. ITM0.ITMREF) unless Sage X3 auto-generates it. For Custom actions, fill it only if the action needs one.',
+				displayOptions: { show: { operation: ['create', 'custom'] } },
 			},
 			{
 				displayName: 'Data (JSON)',
@@ -648,8 +674,8 @@ export class Nx3Soap implements INodeType {
 				default: '{\n  "ITM0": {\n    "TSICOD": ["20"]\n  }\n}',
 				required: true,
 				description:
-					'JSON object with screen abbreviations and field values. All fields must be arrays (e.g. "TSICOD": ["20"]); use "TSICOD(1)":"20" to target a specific index. Dates: "YYYY-MM-DD". Empty values: "" / 0 / "0000-00-00".',
-				displayOptions: { show: { operation: ['create', 'modify'] } },
+					'JSON payload sent as XDATAJSON. For Create/Modify: the fields to set. For List: optional filter/selection criteria. For Custom: depends on the action. All fields are dimensioned, so values are arrays (e.g. "TSICOD": ["20"]); use "TSICOD(1)":"20" to target a specific index. Dates: "YYYY-MM-DD".',
+				displayOptions: { show: { operation: ['create', 'modify', 'list', 'custom'] } },
 			},
 
 			// Run Sub-Program (Advanced) -------------------------------------------
@@ -808,7 +834,19 @@ export class Nx3Soap implements INodeType {
 					const object = (this.getNodeParameter('object', i) as string).trim();
 					const ident = (this.getNodeParameter('ident', i, '') as string).trim();
 					const transaction = (this.getNodeParameter('transaction', i, '') as string).trim();
-					const action = ACTION_MAP[operation];
+
+					// Built-in operations map to a fixed XACTION; Custom Action reads it from a field.
+					let action: string;
+					if (operation === 'custom') {
+						action = (this.getNodeParameter('actionCode', i, '') as string).trim().toUpperCase();
+						if (!action) {
+							throw new NodeOperationError(this.getNode(), 'Action Code is required for Custom Action', {
+								itemIndex: i,
+							});
+						}
+					} else {
+						action = ACTION_MAP[operation];
+					}
 
 					if (!object) {
 						throw new NodeOperationError(this.getNode(), 'X3 Object Code is required', {
@@ -821,8 +859,10 @@ export class Nx3Soap implements INodeType {
 						});
 					}
 
+					// XDATAJSON is meaningful for Create/Modify (the fields to set), List (filter
+					// criteria) and Custom (depends on the action). Read sends an empty payload.
 					let dataJsonString = '';
-					if (operation === 'create' || operation === 'modify') {
+					if (operation !== 'read') {
 						const rawData = this.getNodeParameter('data', i, '{}');
 						let parsed: unknown;
 						if (typeof rawData === 'string') {
