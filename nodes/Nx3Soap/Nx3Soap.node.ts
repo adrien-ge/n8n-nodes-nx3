@@ -627,11 +627,10 @@ export class Nx3Soap implements INodeType {
 				name: 'actionCode',
 				type: 'string',
 				default: '',
-				required: true,
-				placeholder: 'LIST',
+				placeholder: 'READ',
 				description:
-					'XACTION value sent to the sub-program (e.g. LIST, or any custom action the X3 patch exposes). Will be upper-cased.',
-				displayOptions: { show: { operation: ['custom'] } },
+					'XACTION value sent to the sub-program. Leave empty to use the value implied by the Operation above (READ / LIST / CREATE / MODIFY). Required when Operation is "Custom". Always upper-cased.',
+				displayOptions: { show: { operation: X3_OBJECT_OPS } },
 			},
 			{
 				displayName: 'Sage X3 Object Code',
@@ -840,16 +839,18 @@ export class Nx3Soap implements INodeType {
 					const ident = (this.getNodeParameter('ident', i, '') as string).trim();
 					const transaction = (this.getNodeParameter('transaction', i, '') as string).trim();
 
-					// Built-in operations map to a fixed XACTION; Custom Action reads it from a field.
+					// A typed Action Code always wins. When left empty, fall back to the XACTION
+					// implied by the Operation dropdown (the dropdown then acts as a shortcut).
+					const typedAction = (this.getNodeParameter('actionCode', i, '') as string)
+						.trim()
+						.toUpperCase();
 					const action: string =
-						operation === 'custom'
-							? (this.getNodeParameter('actionCode', i, '') as string).trim().toUpperCase()
-							: ACTION_MAP[operation];
+						typedAction || (operation === 'custom' ? '' : ACTION_MAP[operation]);
 
-					if (operation === 'custom' && !action) {
+					if (!action) {
 						throw new NodeOperationError(
 							this.getNode(),
-							'Action Code is required for Custom Action',
+							'Action Code is required when Operation is "Custom"',
 							{ itemIndex: i },
 						);
 					}
