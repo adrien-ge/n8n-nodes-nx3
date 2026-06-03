@@ -26,6 +26,11 @@ const ACTION_MAP: Record<Exclude<Operation, 'runRaw' | 'custom'>, string> = {
 	modify: 'MODIFY',
 };
 
+// Operations that act on a Sage X3 object (the shared XOBJECT/XTRANSACTION fields apply).
+const X3_OBJECT_OPS: string[] = ['read', 'list', 'create', 'modify', 'custom'];
+// Subset whose XDATAJSON payload is meaningful (Read sends an empty payload).
+const X3_OPS_WITH_DATA: string[] = ['list', 'create', 'modify', 'custom'];
+
 interface CallContext {
 	codeLang: string;
 	poolAlias: string;
@@ -636,7 +641,7 @@ export class Nx3Soap implements INodeType {
 				required: true,
 				placeholder: 'ITM',
 				description: 'Sage X3 object code (e.g. ITM, SOH, BPC)',
-				displayOptions: { show: { operation: ['read', 'list', 'create', 'modify', 'custom'] } },
+				displayOptions: { show: { operation: X3_OBJECT_OPS } },
 			},
 			{
 				displayName: 'Transaction Code',
@@ -645,7 +650,7 @@ export class Nx3Soap implements INodeType {
 				default: '',
 				placeholder: 'STD',
 				description: 'Sage X3 transaction code (XTRANSACTION). Leave empty for default.',
-				displayOptions: { show: { operation: ['read', 'list', 'create', 'modify', 'custom'] } },
+				displayOptions: { show: { operation: X3_OBJECT_OPS } },
 			},
 			{
 				displayName: 'Identifier',
@@ -675,7 +680,7 @@ export class Nx3Soap implements INodeType {
 				required: true,
 				description:
 					'JSON payload sent as XDATAJSON. For Create/Modify: the fields to set. For List: optional filter/selection criteria. For Custom: depends on the action. All fields are dimensioned, so values are arrays (e.g. "TSICOD": ["20"]); use "TSICOD(1)":"20" to target a specific index. Dates: "YYYY-MM-DD".',
-				displayOptions: { show: { operation: ['create', 'modify', 'list', 'custom'] } },
+				displayOptions: { show: { operation: X3_OPS_WITH_DATA } },
 			},
 
 			// Run Sub-Program (Advanced) -------------------------------------------
@@ -836,16 +841,17 @@ export class Nx3Soap implements INodeType {
 					const transaction = (this.getNodeParameter('transaction', i, '') as string).trim();
 
 					// Built-in operations map to a fixed XACTION; Custom Action reads it from a field.
-					let action: string;
-					if (operation === 'custom') {
-						action = (this.getNodeParameter('actionCode', i, '') as string).trim().toUpperCase();
-						if (!action) {
-							throw new NodeOperationError(this.getNode(), 'Action Code is required for Custom Action', {
-								itemIndex: i,
-							});
-						}
-					} else {
-						action = ACTION_MAP[operation];
+					const action: string =
+						operation === 'custom'
+							? (this.getNodeParameter('actionCode', i, '') as string).trim().toUpperCase()
+							: ACTION_MAP[operation];
+
+					if (operation === 'custom' && !action) {
+						throw new NodeOperationError(
+							this.getNode(),
+							'Action Code is required for Custom Action',
+							{ itemIndex: i },
+						);
 					}
 
 					if (!object) {
