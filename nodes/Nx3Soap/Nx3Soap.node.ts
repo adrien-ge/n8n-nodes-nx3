@@ -16,7 +16,7 @@ const SOAP_PATH = '/soap-generic/syracuse/collaboration/syracuse/CAdxWebServiceX
 // Default X3 sub-program implementing the JSON-driven object API (patch ChatX3).
 const DEFAULT_PUBLIC_NAME = 'XCHATX3OBJ';
 
-type Operation = 'read' | 'list' | 'create' | 'modify' | 'custom' | 'runRaw';
+type Operation = 'read' | 'list' | 'create' | 'modify' | 'describe' | 'custom' | 'runRaw';
 
 // Built-in XACTION values. `custom` reads the value from a free-text field at runtime,
 // `runRaw` builds its own input payload, so neither appear in the map.
@@ -25,11 +25,13 @@ const ACTION_MAP: Record<Exclude<Operation, 'runRaw' | 'custom'>, string> = {
 	list: 'LIST',
 	create: 'CREATE',
 	modify: 'MODIFY',
+	describe: 'DESC',
 };
 
 // Operations that act on a Sage X3 object (the shared XOBJECT/XTRANSACTION fields apply).
-const X3_OBJECT_OPS: string[] = ['read', 'list', 'create', 'modify', 'custom'];
-// Subset whose XDATAJSON payload is meaningful (Read sends an empty payload).
+const X3_OBJECT_OPS: string[] = ['read', 'list', 'create', 'modify', 'describe', 'custom'];
+// Subset whose XDATAJSON payload carries object data (the user's `data` field is read).
+// Read and Describe send no object data — only the optional `context` envelope, if any.
 const X3_OPS_WITH_DATA: string[] = ['list', 'create', 'modify', 'custom'];
 
 // One Action Code field per built-in operation, each pre-filled with the matching XACTION.
@@ -263,6 +265,32 @@ function debugResult(resultXml: string): unknown {
 		if (parsed && typeof parsed === 'object') return deepParseJsonStrings(parsed);
 	}
 	return resultXml;
+}
+
+/**
+ * Translate low-level network errors (timeout, refused, DNS, etc.) into one-sentence
+ * actionable messages. Important for AI Agent tool calls: a clear message lets the
+ * LLM decide whether to retry, ask the user, or surface the failure.
+ */
+function describeNetworkError(err: Error & { code?: string }): string | undefined {
+	const code = err.code ?? '';
+	const msg = err.message ?? '';
+	if (code === 'ECONNABORTED' || /timeout/i.test(msg)) {
+		return 'Sage X3 did not respond before the request timed out — check that the X3 server is reachable, or raise the Request Timeout option in Advanced Options';
+	}
+	if (code === 'ECONNREFUSED') {
+		return 'Connection refused by the Sage X3 server — the host is up but no service is listening on that port. Check the credential Base URL';
+	}
+	if (code === 'ENOTFOUND') {
+		return 'Cannot resolve the Sage X3 host — DNS/host name not found. Check the credential Base URL';
+	}
+	if (code === 'EHOSTUNREACH' || code === 'ENETUNREACH') {
+		return 'Network unreachable — cannot route to the Sage X3 server. Check VPN/network connectivity';
+	}
+	if (code === 'ECONNRESET') {
+		return 'Connection reset by the Sage X3 server during the request';
+	}
+	return undefined;
 }
 
 /**
@@ -625,6 +653,13 @@ export class Nx3Soap implements INodeType {
 						action: 'Run a custom X3 action',
 					},
 					{
+						name: 'Describe Sage X3 Object',
+						value: 'describe',
+						description:
+							'Get the local-menus and field metadata description for a Sage X3 object class',
+						action: 'Describe an X3 object',
+					},
+					{
 						name: 'List Sage X3 Objects',
 						value: 'list',
 						description: 'List records of a Sage X3 object with optional filter criteria',
@@ -704,6 +739,97 @@ export class Nx3Soap implements INodeType {
 				description:
 					'JSON payload sent as XDATAJSON. For Create/Modify: the fields to set. For List: optional filter/selection criteria. For Custom: depends on the action. All fields are dimensioned, so values are arrays (e.g. "TSICOD": ["20"]); use "TSICOD(1)":"20" to target a specific index. Dates: "YYYY-MM-DD".',
 				displayOptions: { show: { operation: X3_OPS_WITH_DATA } },
+			},
+
+			// Context envelope (ChatX3 patch) --------------------------------------
+			// Merged into XDATAJSON as a top-level `context` key, alongside the object
+			// data, only if the user fills at least one sub-option. A workflow that
+			// leaves this empty produces exactly the same payload as before — keeps
+			// backward compatibility with the existing patch behaviour.
+			{
+				displayName: 'Context (Optional)',
+				name: 'x3Context',
+				type: 'collection',
+				placeholder: 'Add context option',
+				default: {},
+				displayOptions: { show: { operation: X3_OBJECT_OPS } },
+				description:
+					'XCHATX3OBJ-level overrides and response filtering. Different layer from the SOAP callContext in Advanced Options.',
+				options: [
+					{
+						displayName: 'Include Hidden Fields',
+						name: 'hiddenFields',
+						type: 'boolean',
+						default: false,
+						description: 'Whether to include hidden and technical fields in the response (off by default)',
+					},
+					{
+						displayName: 'Language',
+						name: 'language',
+						type: 'string',
+						default: '',
+						placeholder: 'ITA',
+						description:
+							'Override the XCHATX3OBJ language for this call (e.g. ITA). Independent from the SOAP-level codeLang in Advanced Options.',
+					},
+					{
+						displayName: 'Response Fields',
+						name: 'responseFields',
+						type: 'fixedCollection',
+						typeOptions: { multipleValues: true },
+						default: {},
+						placeholder: 'Add field',
+						description: 'Restrict the response to these field codes',
+						options: [
+							{
+								name: 'item',
+								displayName: 'Field',
+								values: [
+									{
+										displayName: 'Name',
+										name: 'value',
+										type: 'string',
+										default: '',
+										placeholder: 'DES1AXX',
+									},
+								],
+							},
+						],
+					},
+					{
+						displayName: 'Response Screens',
+						name: 'responseScreens',
+						type: 'fixedCollection',
+						typeOptions: { multipleValues: true },
+						default: {},
+						placeholder: 'Add screen',
+						description: 'Restrict the response to these screen codes',
+						options: [
+							{
+								name: 'item',
+								displayName: 'Screen',
+								values: [
+									{
+										displayName: 'Code',
+										name: 'value',
+										type: 'string',
+										default: '',
+										placeholder: 'ITM0',
+									},
+								],
+							},
+						],
+					},
+					{
+						displayName: 'User',
+						name: 'user',
+						type: 'string',
+						default: '',
+						placeholder: 'FU01',
+						description:
+							'Override the target user for this call. Only honored when the caller has GPROFIL=ADMIN.',
+					},
+				],
 			},
 
 			// Run Sub-Program (Advanced) -------------------------------------------
@@ -793,6 +919,15 @@ export class Nx3Soap implements INodeType {
 						type: 'string',
 						default: DEFAULT_PUBLIC_NAME,
 						description: 'Override the Sage X3 sub-program used by Read/Create/Modify',
+					},
+					{
+						displayName: 'Request Timeout (Seconds)',
+						name: 'requestTimeout',
+						type: 'number',
+						default: 30,
+						typeOptions: { minValue: 1 },
+						description:
+							'Abort the SOAP request after this many seconds if Sage X3 has not responded. Prevents AI Agent runs from hanging when the X3 server is unreachable. A clear timeout error is then surfaced to the workflow / agent.',
 					},
 					{
 						displayName: 'Trim Trailing Empty Values',
@@ -890,15 +1025,18 @@ export class Nx3Soap implements INodeType {
 						});
 					}
 
-					// XDATAJSON is meaningful for Create/Modify (the fields to set), List (filter
-					// criteria) and Custom (depends on the action). Read sends an empty payload.
-					let dataJsonString = '';
-					if (operation !== 'read') {
+					// Build the XDATAJSON payload. Object data is only sent for ops in
+					// X3_OPS_WITH_DATA (List/Create/Modify/Custom); Read and Describe
+					// start from an empty payload. The optional Context envelope from the
+					// ChatX3 patch (language/user/response.*) is merged in at the top level
+					// when at least one sub-option is filled.
+					const parsed: IDataObject = {};
+					if (X3_OPS_WITH_DATA.includes(operation)) {
 						const rawData = this.getNodeParameter('data', i, '{}');
-						let parsed: unknown;
+						let parsedData: unknown;
 						if (typeof rawData === 'string') {
 							try {
-								parsed = JSON.parse(rawData);
+								parsedData = JSON.parse(rawData);
 							} catch (e) {
 								throw new NodeOperationError(
 									this.getNode(),
@@ -907,13 +1045,43 @@ export class Nx3Soap implements INodeType {
 								);
 							}
 						} else {
-							parsed = rawData;
+							parsedData = rawData;
 						}
-						// Compact form (no whitespace/newlines) — matches what SoapUI sends and
-						// avoids confusing X3's payload parser when entity-encoded whitespace would
-						// leak through (&#x0a; etc.).
-						dataJsonString = JSON.stringify(parsed);
+						if (parsedData && typeof parsedData === 'object' && !Array.isArray(parsedData)) {
+							Object.assign(parsed, parsedData as IDataObject);
+						}
 					}
+
+					const ctxInput = this.getNodeParameter('x3Context', i, {}) as IDataObject;
+					const contextObj: IDataObject = {};
+					if (typeof ctxInput.language === 'string' && ctxInput.language !== '') {
+						contextObj.language = ctxInput.language;
+					}
+					if (typeof ctxInput.user === 'string' && ctxInput.user !== '') {
+						contextObj.user = ctxInput.user;
+					}
+					const responseObj: IDataObject = {};
+					const screens = (
+						(ctxInput.responseScreens as { item?: Array<{ value?: string }> })?.item ?? []
+					)
+						.map((s) => s.value?.trim())
+						.filter((v): v is string => !!v);
+					if (screens.length > 0) responseObj.screens = screens;
+					const fields = (
+						(ctxInput.responseFields as { item?: Array<{ value?: string }> })?.item ?? []
+					)
+						.map((s) => s.value?.trim())
+						.filter((v): v is string => !!v);
+					if (fields.length > 0) responseObj.fields = fields;
+					if (ctxInput.hiddenFields === true) responseObj.hidden_fields = true;
+					if (Object.keys(responseObj).length > 0) contextObj.response = responseObj;
+					if (Object.keys(contextObj).length > 0) parsed.context = contextObj;
+
+					// Compact form (no whitespace/newlines) — matches what SoapUI sends and
+					// avoids confusing X3's payload parser when entity-encoded whitespace would
+					// leak through (&#x0a; etc.). Empty payload stays empty.
+					const dataJsonString =
+						Object.keys(parsed).length > 0 ? JSON.stringify(parsed) : '';
 
 					const publicName =
 						typeof advanced.publicName === 'string' && advanced.publicName !== ''
@@ -932,6 +1100,13 @@ export class Nx3Soap implements INodeType {
 					metaForOutput = { kind: 'object', action, object, ident, transaction };
 				}
 
+				// Default 30 s — avoids AI Agent runs hanging forever on a dead X3 server.
+				const requestTimeoutSec =
+					typeof advanced.requestTimeout === 'number' && advanced.requestTimeout > 0
+						? advanced.requestTimeout
+						: 30;
+				const requestTimeoutMs = requestTimeoutSec * 1000;
+
 				const requestOptions: IHttpRequestOptions = {
 					method: 'POST',
 					url: `${baseUrl}${SOAP_PATH}`,
@@ -942,6 +1117,7 @@ export class Nx3Soap implements INodeType {
 					body: envelope,
 					returnFullResponse: false,
 					skipSslCertificateValidation: allowSelfSigned,
+					timeout: requestTimeoutMs,
 				};
 
 				const response = (await this.helpers.httpRequestWithAuthentication.call(
@@ -1011,14 +1187,21 @@ export class Nx3Soap implements INodeType {
 
 				returnData.push({ json: output, pairedItem: i });
 			} catch (error) {
+				const err = error as Error & { code?: string };
+				const networkHint = describeNetworkError(err);
+				const friendlyMessage = networkHint ?? err.message ?? 'Unknown error calling Sage X3';
+
 				if (this.continueOnFail()) {
 					returnData.push({
-						json: { error: (error as Error).message },
+						json: { error: friendlyMessage, code: err.code, raw: err.message },
 						pairedItem: i,
 					});
 					continue;
 				}
-				throw new NodeApiError(this.getNode(), error as JsonObject, { itemIndex: i });
+				throw new NodeApiError(this.getNode(), error as JsonObject, {
+					itemIndex: i,
+					message: friendlyMessage,
+				});
 			}
 		}
 
