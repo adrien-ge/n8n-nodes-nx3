@@ -16,7 +16,16 @@ const SOAP_PATH = '/soap-generic/syracuse/collaboration/syracuse/CAdxWebServiceX
 // Default X3 sub-program implementing the JSON-driven object API (patch ChatX3).
 const DEFAULT_PUBLIC_NAME = 'XCHATX3OBJ';
 
-type Operation = 'read' | 'list' | 'create' | 'modify' | 'describe' | 'custom' | 'runRaw';
+type Operation =
+	| 'read'
+	| 'list'
+	| 'create'
+	| 'modify'
+	| 'describe'
+	| 'custom'
+	| 'sqlAnalyse'
+	| 'sqlSelect'
+	| 'runRaw';
 
 // Built-in XACTION values. `custom` reads the value from a free-text field at runtime,
 // `runRaw` builds its own input payload, so neither appear in the map.
@@ -26,10 +35,15 @@ const ACTION_MAP: Record<Exclude<Operation, 'runRaw' | 'custom'>, string> = {
 	create: 'CREATE',
 	modify: 'MODIFY',
 	describe: 'DESC',
+	sqlAnalyse: 'ANALYSE',
+	sqlSelect: 'SELECT',
 };
 
 // Operations that act on a Sage X3 object (the shared XOBJECT/XTRANSACTION fields apply).
+// SQL ops hardcode XOBJECT='SQL' and build their own payload, so they are NOT in this set.
 const X3_OBJECT_OPS: string[] = ['read', 'list', 'create', 'modify', 'describe', 'custom'];
+// SQL ops that run a query through XCHATX3OBJ with XOBJECT='SQL'.
+const SQL_OPS: string[] = ['sqlAnalyse', 'sqlSelect'];
 // Subset whose XDATAJSON payload carries object data (the user's `data` field is read).
 // Read and Describe send no object data — only the optional `context` envelope, if any.
 const X3_OPS_WITH_DATA: string[] = ['list', 'create', 'modify', 'custom'];
@@ -683,6 +697,20 @@ export class Nx3Soap implements INodeType {
 						description: 'Call any Sage X3 sub-program with raw input XML',
 						action: 'Run a sub program with raw xml',
 					},
+					{
+						name: 'SQL Analyse',
+						value: 'sqlAnalyse',
+						description:
+							'Check that a SQL query is syntactically valid, without returning any rows',
+						action: 'Analyse a SQL query',
+					},
+					{
+						name: 'SQL Select',
+						value: 'sqlSelect',
+						description:
+							'Execute a SQL SELECT against the Sage X3 database and return the rows',
+						action: 'Run a SQL SELECT query',
+					},
 				],
 			},
 
@@ -828,6 +856,48 @@ export class Nx3Soap implements INodeType {
 						placeholder: 'FU01',
 						description:
 							'Override the target user for this call. Only honored when the caller has GPROFIL=ADMIN.',
+					},
+				],
+			},
+
+			// SQL operations (XOBJECT='SQL', payload built from Query + Options) ---
+			{
+				displayName: 'SQL Query',
+				name: 'sqlQuery',
+				type: 'string',
+				typeOptions: { rows: 6 },
+				default: '',
+				required: true,
+				placeholder:
+					'SELECT TOP (100) [ITMREF_0], [ITMDES1_0] FROM [basex3].[SEED].[ITMMASTER]',
+				description:
+					'SQL query executed against the Sage X3 database via the ChatX3 sub-program. Read-only style — use SQL Analyse to validate the syntax, SQL Select to fetch rows.',
+				displayOptions: { show: { operation: SQL_OPS } },
+			},
+			{
+				displayName: 'SQL Options (Optional)',
+				name: 'sqlOptions',
+				type: 'collection',
+				placeholder: 'Add SQL option',
+				default: {},
+				displayOptions: { show: { operation: SQL_OPS } },
+				description: 'Optional runtime caps for the SQL execution',
+				options: [
+					{
+						displayName: 'Max Lines',
+						name: 'maxLines',
+						type: 'number',
+						default: 0,
+						typeOptions: { minValue: 1 },
+						description: 'Cap the number of rows returned',
+					},
+					{
+						displayName: 'Max Time (Ms)',
+						name: 'maxTime',
+						type: 'number',
+						default: 0,
+						typeOptions: { minValue: 1 },
+						description: 'Cap the SQL execution time in milliseconds',
 					},
 				],
 			},
@@ -993,6 +1063,46 @@ export class Nx3Soap implements INodeType {
 					inputXmlSent = this.getNodeParameter('inputXml', i) as string;
 					envelope = buildRunEnvelope(ctx, publicName, inputXmlSent);
 					metaForOutput = { kind: 'raw', publicName };
+				} else if (SQL_OPS.includes(operation)) {
+					// XOBJECT is fixed to 'SQL'; XDATAJSON = { query, context?: { max_lines?, max_time? } }.
+					const query = (this.getNodeParameter('sqlQuery', i, '') as string).trim();
+					if (!query) {
+						throw new NodeOperationError(this.getNode(), 'SQL Query is required', {
+							itemIndex: i,
+						});
+					}
+					const sqlOpts = this.getNodeParameter('sqlOptions', i, {}) as IDataObject;
+					const sqlCtx: IDataObject = {};
+					if (typeof sqlOpts.maxLines === 'number' && sqlOpts.maxLines > 0) {
+						sqlCtx.max_lines = sqlOpts.maxLines;
+					}
+					if (typeof sqlOpts.maxTime === 'number' && sqlOpts.maxTime > 0) {
+						sqlCtx.max_time = sqlOpts.maxTime;
+					}
+					const sqlPayload: IDataObject = { query };
+					if (Object.keys(sqlCtx).length > 0) sqlPayload.context = sqlCtx;
+
+					// A typed Action Code overrides the ANALYSE/SELECT preset, mirroring the
+					// behaviour for object ops.
+					const typedAction = (this.getNodeParameter('actionCode', i, '') as string)
+						.trim()
+						.toUpperCase();
+					const action = typedAction || ACTION_MAP[operation as 'sqlAnalyse' | 'sqlSelect'];
+
+					const publicName =
+						typeof advanced.publicName === 'string' && advanced.publicName !== ''
+							? advanced.publicName
+							: DEFAULT_PUBLIC_NAME;
+
+					inputXmlSent = buildChatX3InputJson({
+						object: 'SQL',
+						transaction: '',
+						action,
+						ident: '',
+						dataJson: JSON.stringify(sqlPayload),
+					});
+					envelope = buildRunEnvelope(ctx, publicName, inputXmlSent);
+					metaForOutput = { kind: 'object', action, object: 'SQL', ident: '', transaction: '' };
 				} else {
 					const object = (this.getNodeParameter('object', i) as string).trim();
 					const ident = (this.getNodeParameter('ident', i, '') as string).trim();

@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `Response Fields` — restrict the response to these field codes.
   - `Include Hidden Fields` — include hidden/technical fields in the
     response (off by default).
+- **SQL Analyse** and **SQL Select** operations. These hardcode
+  `XOBJECT='SQL'` and send `XACTION=ANALYSE` (syntax check, no rows) or
+  `XACTION=SELECT` (execute a SELECT and return rows). The payload is
+  built from a dedicated `SQL Query` field and an optional
+  `SQL Options` collection carrying `max_lines` and `max_time` caps,
+  matching the shape expected by the ChatX3 patch.
 - **Request Timeout (Seconds)** advanced option (default 30 s), applied to
   every SOAP request. Prevents AI Agent runs from hanging forever when the
   Sage X3 server is unreachable.
