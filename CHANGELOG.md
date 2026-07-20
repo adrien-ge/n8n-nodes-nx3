@@ -5,6 +5,40 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-08
+
+### Added
+
+- **Describe Sage X3 Object** operation (`XACTION=DESC`) — get the local-menus
+  and field metadata description of an object class, matching the new method
+  exposed by the ChatX3 patch.
+- **Context (Optional)** collection on every X3 object operation, merged as a
+  top-level `context` key inside XDATAJSON when at least one sub-option is
+  filled. Fields:
+  - `Language` — override the XCHATX3OBJ language for the call (e.g. ITA).
+    Independent from the SOAP-level `codeLang` in Advanced Options.
+  - `User` — override the target user (only honored when GPROFIL=ADMIN).
+  - `Response Screens` — restrict the response to these screen codes.
+  - `Response Fields` — restrict the response to these field codes.
+  - `Include Hidden Fields` — include hidden/technical fields in the
+    response (off by default).
+- **Request Timeout (Seconds)** advanced option (default 30 s), applied to
+  every SOAP request. Prevents AI Agent runs from hanging forever when the
+  Sage X3 server is unreachable.
+- LLM-friendly network error messages: timeouts, `ECONNREFUSED`,
+  `ENOTFOUND`, `EHOSTUNREACH`, `ENETUNREACH` and `ECONNRESET` are now
+  translated into one-sentence actionable messages, so an AI Agent can
+  decide whether to retry, ask the user, or report the failure. Raw error
+  code and message are preserved alongside for debugging.
+
+### Notes
+
+- Backward compatible: workflows saved on 0.2.0 that don't touch Context
+  produce the same XDATAJSON as before (no `context` key injected). The
+  server-side ChatX3 fixes shipped by the associate (no more false
+  `success=true`, LIST advanced selections, non-French compile crash) need
+  no client change.
+
 ## [0.2.0] - 2026-06-03
 
 ### Added
