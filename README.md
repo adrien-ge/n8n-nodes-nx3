@@ -149,7 +149,10 @@ WHERE  USR_0 IN ({{logins}})
 | Boolean | `1` / `0` | flags |
 | List | `'a','b','c'` — comma-split, each quoted | `IN ({{name}})` |
 
-> A List value cannot itself contain a comma, since the comma is the separator.
+> Use **List** — not Text — for `IN ({{name}})`. A Text value holding
+> `a,b` becomes the single literal `'a,b'` and matches nothing; the node
+> detects that case and tells you to switch type. A List value cannot itself
+> contain a comma, since the comma is the separator.
 
 ### Simplify
 

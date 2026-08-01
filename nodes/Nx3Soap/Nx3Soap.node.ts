@@ -522,6 +522,14 @@ function collectSqlParamNames(text: string, mask: boolean[]): string[] {
 	return names;
 }
 
+/** Whether the marker at `offset` sits directly inside an `IN ( ... )` clause. */
+function isInsideInClause(text: string, offset: number): boolean {
+	let i = offset - 1;
+	while (i >= 0 && /\s/.test(text[i])) i--;
+	if (i < 0 || text[i] !== '(') return false;
+	return /\bIN\s*$/i.test(text.slice(0, i));
+}
+
 function substituteSqlParams(
 	text: string,
 	byName: Map<string, SqlParam>,
@@ -536,6 +544,17 @@ function substituteSqlParams(
 			if (!isSqlParamProvided(param)) {
 				throw new ApplicationError(
 					`SQL parameter "${name}" is used in the query but has no value. Define it in Query Parameters, comment that line out, or wrap the clause in [[ ... ]] to make it optional`,
+				);
+			}
+			// A comma-bearing Text value inside IN (...) collapses into one literal:
+			// valid SQL that silently matches nothing. Fail loudly instead.
+			if (
+				(param as SqlParam).type === 'text' &&
+				((param as SqlParam).value ?? '').includes(',') &&
+				isInsideInClause(text, offset)
+			) {
+				throw new ApplicationError(
+					`SQL parameter "${name}" is typed Text but holds comma-separated values inside an IN (...) clause, so it would be sent as one single value and match nothing. Switch its Type to List`,
 				);
 			}
 			return escapeSqlValue(name, (param as SqlParam).type, (param as SqlParam).value);
