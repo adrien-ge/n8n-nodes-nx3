@@ -137,6 +137,9 @@ WHERE  USR_0 IN ({{logins}})
   may not fill in.
 - A `{{name}}` used outside an optional clause with no value raises a clear
   error rather than silently changing the query.
+- **Comments disable parameters.** Markers sitting in a `--` line comment, a
+  `/* ... */` block, or a string literal are left untouched — so commenting a
+  filter line out while you iterate works exactly as a SQL reader expects.
 
 | Type | Rendering | Use for |
 | --- | --- | --- |

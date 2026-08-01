@@ -427,24 +427,120 @@ function isSqlParamProvided(param: SqlParam | undefined): boolean {
 	return true;
 }
 
-function collectSqlParamNames(text: string): string[] {
+/**
+ * Flag every character that is NOT executable code: inside a string literal, a
+ * double-dash line comment, or a slash-star block comment (T-SQL allows those
+ * to nest). Markers found in such regions are left untouched, so commenting a
+ * filter out disables it exactly the way a SQL reader expects.
+ *
+ * This runs before any substitution, so a parameter value can never introduce a
+ * comment that would change how the query is analysed.
+ */
+function maskNonCode(query: string): boolean[] {
+	const mask = new Array<boolean>(query.length).fill(false);
+	let i = 0;
+	let blockDepth = 0;
+
+	while (i < query.length) {
+		const c = query[i];
+		const next = query[i + 1];
+
+		if (blockDepth > 0) {
+			mask[i] = true;
+			if (c === '/' && next === '*') {
+				blockDepth++;
+				mask[i + 1] = true;
+				i += 2;
+				continue;
+			}
+			if (c === '*' && next === '/') {
+				blockDepth--;
+				mask[i + 1] = true;
+				i += 2;
+				continue;
+			}
+			i++;
+			continue;
+		}
+
+		if (c === '-' && next === '-') {
+			while (i < query.length && query[i] !== '\n') {
+				mask[i] = true;
+				i++;
+			}
+			continue;
+		}
+
+		if (c === '/' && next === '*') {
+			blockDepth = 1;
+			mask[i] = true;
+			mask[i + 1] = true;
+			i += 2;
+			continue;
+		}
+
+		if (c === "'" || c === '"') {
+			mask[i] = true;
+			i++;
+			while (i < query.length) {
+				mask[i] = true;
+				if (query[i] === c) {
+					// A doubled quote is an escaped quote, not the end of the literal.
+					if (query[i + 1] === c) {
+						mask[i + 1] = true;
+						i += 2;
+						continue;
+					}
+					i++;
+					break;
+				}
+				i++;
+			}
+			continue;
+		}
+
+		i++;
+	}
+
+	return mask;
+}
+
+/** indexOf that only matches positions belonging to executable code. */
+function indexOfInCode(text: string, mask: boolean[], needle: string, from: number): number {
+	let idx = text.indexOf(needle, from);
+	while (idx !== -1 && mask[idx]) idx = text.indexOf(needle, idx + 1);
+	return idx;
+}
+
+function collectSqlParamNames(text: string, mask: boolean[]): string[] {
 	const names: string[] = [];
 	const re = new RegExp(SQL_PARAM_PATTERN, 'g');
 	let m: RegExpExecArray | null;
-	while ((m = re.exec(text)) !== null) names.push(m[1]);
+	while ((m = re.exec(text)) !== null) {
+		if (!mask[m.index]) names.push(m[1]);
+	}
 	return names;
 }
 
-function substituteSqlParams(text: string, byName: Map<string, SqlParam>): string {
-	return text.replace(new RegExp(SQL_PARAM_PATTERN, 'g'), (_full, name: string) => {
-		const param = byName.get(name);
-		if (!isSqlParamProvided(param)) {
-			throw new ApplicationError(
-				`SQL parameter "${name}" is used in the query but has no value. Define it in Query Parameters, or wrap that clause in [[ ... ]] to make it optional`,
-			);
-		}
-		return escapeSqlValue(name, (param as SqlParam).type, (param as SqlParam).value);
-	});
+function substituteSqlParams(
+	text: string,
+	byName: Map<string, SqlParam>,
+	mask: boolean[],
+): string {
+	return text.replace(
+		new RegExp(SQL_PARAM_PATTERN, 'g'),
+		(full: string, name: string, offset: number) => {
+			// Commented-out or quoted markers stay literal.
+			if (mask[offset]) return full;
+			const param = byName.get(name);
+			if (!isSqlParamProvided(param)) {
+				throw new ApplicationError(
+					`SQL parameter "${name}" is used in the query but has no value. Define it in Query Parameters, comment that line out, or wrap the clause in [[ ... ]] to make it optional`,
+				);
+			}
+			return escapeSqlValue(name, (param as SqlParam).type, (param as SqlParam).value);
+		},
+	);
 }
 
 /**
@@ -454,6 +550,7 @@ function substituteSqlParams(text: string, byName: Map<string, SqlParam>): strin
  *   inside it is provided, and dropped entirely otherwise
  *
  * `[[` never occurs in valid T-SQL, so the `[identifier]` syntax cannot clash.
+ * Markers sitting in a comment or a string literal are ignored throughout.
  * Optional blocks are resolved first (keep/drop only), then a single
  * substitution pass runs — so a value that itself contains `{{...}}` is never
  * re-expanded.
@@ -467,21 +564,22 @@ function applyQueryParameters(query: string, params: SqlParam[]): string {
 		if (name) byName.set(name, param);
 	}
 
+	const mask = maskNonCode(query);
 	let resolved = '';
 	let cursor = 0;
 	while (cursor < query.length) {
-		const start = query.indexOf('[[', cursor);
+		const start = indexOfInCode(query, mask, '[[', cursor);
 		if (start === -1) {
 			resolved += query.slice(cursor);
 			break;
 		}
-		const end = query.indexOf(']]', start + 2);
+		const end = indexOfInCode(query, mask, ']]', start + 2);
 		if (end === -1) {
 			throw new ApplicationError('Unclosed optional block in the SQL query: a "[[" has no matching "]]"');
 		}
 		resolved += query.slice(cursor, start);
 		const inner = query.slice(start + 2, end);
-		const names = collectSqlParamNames(inner);
+		const names = collectSqlParamNames(inner, mask.slice(start + 2, end));
 		if (names.length === 0) {
 			throw new ApplicationError(
 				'An optional block "[[ ... ]]" must contain at least one {{parameter}} to decide whether to keep it',
@@ -491,7 +589,9 @@ function applyQueryParameters(query: string, params: SqlParam[]): string {
 		cursor = end + 2;
 	}
 
-	return substituteSqlParams(resolved, byName);
+	// Dropping the brackets shifts every offset, so the mask is recomputed on the
+	// resolved text rather than reused.
+	return substituteSqlParams(resolved, byName, maskNonCode(resolved));
 }
 
 function unquoteSqlIdentifier(token: string): string {

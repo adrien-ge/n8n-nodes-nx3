@@ -33,7 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parameter is empty. Values are escaped per type — Text (quotes doubled),
   Number (validated numeric), Date (ISO-8601), Boolean, and List (comma-split,
   each element quoted, for `IN ({{name}})`). Values are never concatenated
-  raw, which matters because an AI Agent supplies them.
+  raw, which matters because an AI Agent supplies them. Markers inside a
+  `--` comment, a `/* ... */` block or a string literal are ignored, so
+  commenting a filter line out disables it as expected.
 - **Simplify** option on SQL Select, returning `{ success, rowCount, columns,
   rows }`. Sage X3 answers with generic `Col_1`, `Col_2`, … keys; Simplify
   recovers the real column names by parsing the SELECT list of the query.
