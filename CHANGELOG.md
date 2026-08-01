@@ -28,6 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   built from a dedicated `SQL Query` field and an optional
   `SQL Options` collection carrying `max_lines` and `max_time` caps,
   matching the shape expected by the ChatX3 patch.
+- **Query Parameters** for SQL, with Metabase-style syntax: `{{name}}`
+  placeholders and `[[ ... ]]` optional clauses that vanish when their
+  parameter is empty. Values are escaped per type — Text (quotes doubled),
+  Number (validated numeric), Date (ISO-8601), Boolean, and List (comma-split,
+  each element quoted, for `IN ({{name}})`). Values are never concatenated
+  raw, which matters because an AI Agent supplies them.
+- **Simplify** option on SQL Select, returning `{ success, rowCount, columns,
+  rows }`. Sage X3 answers with generic `Col_1`, `Col_2`, … keys; Simplify
+  recovers the real column names by parsing the SELECT list of the query.
+  The renaming is best-effort and conservative — with `SELECT *`, an
+  unresolvable expression, or any count mismatch, the original keys are kept.
+  A **Row Format** option switches rows between `Objects` (one key per column)
+  and `Arrays` (values only — far more compact for an AI Agent).
 - **Request Timeout (Seconds)** advanced option (default 30 s), applied to
   every SOAP request. Prevents AI Agent runs from hanging forever when the
   Sage X3 server is unreachable.

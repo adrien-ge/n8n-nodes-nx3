@@ -8,7 +8,12 @@ import type {
 	INodeTypeDescription,
 	JsonObject,
 } from 'n8n-workflow';
-import { NodeApiError, NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import {
+	ApplicationError,
+	NodeApiError,
+	NodeConnectionTypes,
+	NodeOperationError,
+} from 'n8n-workflow';
 
 // Path appended to the credential base URL to reach the SOAP endpoint.
 const SOAP_PATH = '/soap-generic/syracuse/collaboration/syracuse/CAdxWebServiceXmlCC';
@@ -349,6 +354,248 @@ function reshapeX3Data(
 }
 
 // ---------------------------------------------------------------------------
+// SQL query helpers (parameters + column names)
+// ---------------------------------------------------------------------------
+
+type SqlParamType = 'boolean' | 'date' | 'list' | 'number' | 'text';
+
+interface SqlParam {
+	name: string;
+	type: SqlParamType;
+	value: string;
+}
+
+// Matches a {{name}} placeholder. Built fresh per use so `lastIndex` never leaks.
+const SQL_PARAM_PATTERN = '\\{\\{\\s*([A-Za-z0-9_.-]+)\\s*\\}\\}';
+
+/** Quote a string as a SQL literal, doubling embedded single quotes. */
+function escapeSqlText(name: string, value: string): string {
+	if (value.includes('\u0000')) {
+		throw new ApplicationError(`SQL parameter "${name}" contains a NUL character`);
+	}
+	return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * Render a parameter as a complete SQL literal. The result already carries its
+ * own quoting, so `{{param}}` must NOT be written inside quotes in the query.
+ * Values are never concatenated raw — this is the injection barrier for the
+ * AI Agent use case, where an LLM supplies the values.
+ */
+function escapeSqlValue(name: string, type: SqlParamType, raw: string): string {
+	const value = raw.trim();
+	switch (type) {
+		case 'number':
+			if (!/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(value)) {
+				throw new ApplicationError(
+					`SQL parameter "${name}" is typed Number but its value is not numeric: ${raw}`,
+				);
+			}
+			return value;
+		case 'boolean':
+			return /^(true|1|yes|y|on)$/i.test(value) ? '1' : '0';
+		case 'date':
+			if (!/^\d{4}-\d{2}-\d{2}([T ][\d:.]+(Z|[+-]\d{2}:?\d{2})?)?$/.test(value)) {
+				throw new ApplicationError(
+					`SQL parameter "${name}" is typed Date but its value is not YYYY-MM-DD or ISO-8601: ${raw}`,
+				);
+			}
+			return escapeSqlText(name, value);
+		case 'list': {
+			// "a, b ,c" -> 'a','b','c' — each element escaped on its own so the
+			// result can be dropped straight into an IN (...) clause.
+			const items = value
+				.split(',')
+				.map((v) => v.trim())
+				.filter((v) => v !== '');
+			if (items.length === 0) {
+				throw new ApplicationError(`SQL parameter "${name}" is typed List but resolves to an empty list`);
+			}
+			return items.map((v) => escapeSqlText(name, v)).join(',');
+		}
+		default:
+			return escapeSqlText(name, value);
+	}
+}
+
+/** A parameter counts as provided only when it yields at least one value. */
+function isSqlParamProvided(param: SqlParam | undefined): boolean {
+	if (!param) return false;
+	const value = (param.value ?? '').trim();
+	if (value === '') return false;
+	if (param.type === 'list') return value.split(',').some((v) => v.trim() !== '');
+	return true;
+}
+
+function collectSqlParamNames(text: string): string[] {
+	const names: string[] = [];
+	const re = new RegExp(SQL_PARAM_PATTERN, 'g');
+	let m: RegExpExecArray | null;
+	while ((m = re.exec(text)) !== null) names.push(m[1]);
+	return names;
+}
+
+function substituteSqlParams(text: string, byName: Map<string, SqlParam>): string {
+	return text.replace(new RegExp(SQL_PARAM_PATTERN, 'g'), (_full, name: string) => {
+		const param = byName.get(name);
+		if (!isSqlParamProvided(param)) {
+			throw new ApplicationError(
+				`SQL parameter "${name}" is used in the query but has no value. Define it in Query Parameters, or wrap that clause in [[ ... ]] to make it optional`,
+			);
+		}
+		return escapeSqlValue(name, (param as SqlParam).type, (param as SqlParam).value);
+	});
+}
+
+/**
+ * Apply Metabase-style parameters to a query.
+ * - `{{name}}` is replaced by the escaped value
+ * - `[[ ... {{name}} ... ]]` is kept without its brackets when every parameter
+ *   inside it is provided, and dropped entirely otherwise
+ *
+ * `[[` never occurs in valid T-SQL, so the `[identifier]` syntax cannot clash.
+ * Optional blocks are resolved first (keep/drop only), then a single
+ * substitution pass runs — so a value that itself contains `{{...}}` is never
+ * re-expanded.
+ */
+function applyQueryParameters(query: string, params: SqlParam[]): string {
+	if (!query.includes('{{') && !query.includes('[[')) return query;
+
+	const byName = new Map<string, SqlParam>();
+	for (const param of params) {
+		const name = (param.name ?? '').trim();
+		if (name) byName.set(name, param);
+	}
+
+	let resolved = '';
+	let cursor = 0;
+	while (cursor < query.length) {
+		const start = query.indexOf('[[', cursor);
+		if (start === -1) {
+			resolved += query.slice(cursor);
+			break;
+		}
+		const end = query.indexOf(']]', start + 2);
+		if (end === -1) {
+			throw new ApplicationError('Unclosed optional block in the SQL query: a "[[" has no matching "]]"');
+		}
+		resolved += query.slice(cursor, start);
+		const inner = query.slice(start + 2, end);
+		const names = collectSqlParamNames(inner);
+		if (names.length === 0) {
+			throw new ApplicationError(
+				'An optional block "[[ ... ]]" must contain at least one {{parameter}} to decide whether to keep it',
+			);
+		}
+		if (names.every((name) => isSqlParamProvided(byName.get(name)))) resolved += inner;
+		cursor = end + 2;
+	}
+
+	return substituteSqlParams(resolved, byName);
+}
+
+function unquoteSqlIdentifier(token: string): string {
+	const t = token.trim();
+	if (t.startsWith('[') && t.endsWith(']')) return t.slice(1, -1);
+	if (t.startsWith('"') && t.endsWith('"')) return t.slice(1, -1);
+	return t;
+}
+
+/**
+ * Split the SELECT list on depth-0 commas and stop at the depth-0 FROM, so that
+ * `ISNULL(a, b)` and sub-queries stay intact.
+ */
+function splitSelectList(text: string): string[] {
+	const items: string[] = [];
+	let depth = 0;
+	let quote: string | null = null;
+	let start = 0;
+
+	for (let i = 0; i < text.length; i++) {
+		const c = text[i];
+		if (quote) {
+			if (c === quote) {
+				if (text[i + 1] === quote) i++;
+				else quote = null;
+			}
+			continue;
+		}
+		if (c === "'" || c === '"') {
+			quote = c;
+			continue;
+		}
+		if (c === '(' || c === '[') {
+			depth++;
+			continue;
+		}
+		if (c === ')' || c === ']') {
+			if (depth > 0) depth--;
+			continue;
+		}
+		if (depth !== 0) continue;
+		if (c === ',') {
+			items.push(text.slice(start, i));
+			start = i + 1;
+			continue;
+		}
+		if (
+			(c === 'F' || c === 'f') &&
+			/^from\b/i.test(text.slice(i, i + 5)) &&
+			/[\s)\]]/.test(text[i - 1] ?? ' ')
+		) {
+			items.push(text.slice(start, i));
+			return items;
+		}
+	}
+	items.push(text.slice(start));
+	return items;
+}
+
+/** Resolve the output name of one SELECT item, or undefined when unknowable. */
+function resolveColumnName(item: string): string | undefined {
+	const s = item.trim();
+	if (s === '' || s === '*' || s.endsWith('.*')) return undefined;
+
+	const as = s.match(/\sAS\s+(\[[^\]]+\]|"[^"]+"|[A-Za-z_][A-Za-z0-9_$#@]*)\s*$/i);
+	if (as) return unquoteSqlIdentifier(as[1]);
+
+	// A single bracketed name may legitimately contain dots: [my.column]
+	if (/^\[[^\]]+\]$/.test(s)) return s.slice(1, -1);
+
+	// Plain reference such as USR_0, [USR_0], t.[USR_0], dbo.t.col
+	if (/^[A-Za-z0-9_$#@."[\]]+$/.test(s)) {
+		const segments = s.split('.');
+		const name = unquoteSqlIdentifier(segments[segments.length - 1]);
+		return /^[A-Za-z0-9_$#@]+$/.test(name) ? name : undefined;
+	}
+
+	// Bare alias, but only for the unambiguous "reference alias" shape
+	const two = s.match(
+		/^([A-Za-z0-9_$#@."[\]]+)\s+(\[[^\]]+\]|"[^"]+"|[A-Za-z_][A-Za-z0-9_$#@]*)$/,
+	);
+	if (two) return unquoteSqlIdentifier(two[2]);
+
+	return undefined;
+}
+
+/**
+ * Best-effort recovery of the real column names from the query, because X3
+ * answers with generic `Col_1`, `Col_2`, ... keys. Returns one entry per SELECT
+ * item, `undefined` where the name cannot be determined (e.g. `SELECT *`).
+ */
+function deriveColumnNames(query: string): Array<string | undefined> {
+	const selectMatch = query.match(/^\s*SELECT\s+/i);
+	if (!selectMatch) return [];
+	let rest = query.slice(selectMatch[0].length);
+	rest = rest.replace(/^\s*(?:ALL|DISTINCT)\s+/i, '');
+	rest = rest.replace(
+		/^\s*TOP\s*(?:\(\s*\d+\s*\)|\d+)\s*(?:PERCENT\s*)?(?:WITH\s+TIES\s*)?/i,
+		'',
+	);
+	return splitSelectList(rest).map(resolveColumnName);
+}
+
+// ---------------------------------------------------------------------------
 // SOAP envelope construction
 // ---------------------------------------------------------------------------
 
@@ -625,6 +872,96 @@ function buildObjectOperationOutput(args: {
 	return output;
 }
 
+/**
+ * Locate the row array in a SQL response. X3 answers with a plain array of flat
+ * objects, so this stays deliberately small; `recognised: false` tells the
+ * caller to fall back to the full envelope rather than invent a shape.
+ */
+function extractSqlRows(dataJson: unknown): { rows: IDataObject[]; recognised: boolean } {
+	if (Array.isArray(dataJson)) {
+		if (dataJson.length === 0) return { rows: [], recognised: true };
+		const allObjects = dataJson.every(
+			(row) => row !== null && typeof row === 'object' && !Array.isArray(row),
+		);
+		return allObjects
+			? { rows: dataJson as IDataObject[], recognised: true }
+			: { rows: [], recognised: false };
+	}
+	if (dataJson !== null && typeof dataJson === 'object') {
+		const arrayProps = Object.values(dataJson as IDataObject).filter((v) => Array.isArray(v));
+		if (arrayProps.length === 1) return extractSqlRows(arrayProps[0]);
+	}
+	return { rows: [], recognised: false };
+}
+
+/**
+ * Decide the column labels for a SQL result. The derived names replace X3's
+ * generic `Col_N` keys only when the mapping is unambiguous: same count, no
+ * gaps, no duplicates, and every row sharing the same key set. Otherwise the
+ * raw keys are kept — a misaligned mapping would be worse than none.
+ */
+function resolveSqlColumns(keys: string[], derived: Array<string | undefined>): string[] {
+	if (keys.length === 0) return derived.filter((n): n is string => !!n);
+	if (derived.length !== keys.length) return keys;
+	if (derived.some((n) => !n)) return keys;
+	const names = derived as string[];
+	if (new Set(names).size !== names.length) return keys;
+	return names;
+}
+
+/**
+ * Build the Simplify output for a SQL SELECT: `{ success, rowCount, columns,
+ * rows }` with the real column names restored. Reads the raw `dataJson` on
+ * purpose — running it through `reshapeX3Data` would collapse a single-row
+ * result into a bare object and make the output type depend on the row count.
+ * Returns undefined when the payload is not row-shaped, so the caller can fall
+ * back to the standard envelope.
+ */
+function buildSqlSimplifiedOutput(
+	parsed: ParsedResponse,
+	query: string,
+	rowFormat: 'arrays' | 'objects',
+): IDataObject | undefined {
+	const { rows, recognised } = extractSqlRows(parsed.dataJson);
+	if (!recognised) return undefined;
+
+	const keys = rows.length > 0 ? Object.keys(rows[0]) : [];
+	const sameShape = rows.every(
+		(row) => Object.keys(row).length === keys.length && keys.every((k) => k in row),
+	);
+	const columns = resolveSqlColumns(sameShape ? keys : [], deriveColumnNames(query));
+	const labels = columns.length === keys.length ? columns : keys;
+
+	const output: IDataObject = {
+		success: parsed.xsuccess ?? parsed.status === 1,
+		rowCount: rows.length,
+		columns,
+		rows:
+			rowFormat === 'arrays'
+				? rows.map((row) => keys.map((key) => row[key]))
+				: rows.map((row) => {
+						const mapped: IDataObject = {};
+						keys.forEach((key, index) => {
+							mapped[labels[index]] = row[key];
+						});
+						return mapped;
+					}),
+	};
+
+	// Keep only real user messages — the bare {trace} entry is already surfaced
+	// through `trace`, so dropping it keeps the happy path clean while errors
+	// and warnings stay visible.
+	const rawMessages = Array.isArray(parsed.xmessages) ? (parsed.xmessages as IDataObject[]) : [];
+	const realMessages = rawMessages.filter(
+		(m) => m !== null && typeof m === 'object' && Object.keys(m).some((k) => k !== 'trace'),
+	);
+	if (realMessages.length > 0) output.messages = realMessages;
+	else if (parsed.soapMessages.length > 0) output.messages = parsed.soapMessages;
+	if (parsed.xtrace !== undefined) output.trace = parsed.xtrace;
+
+	return output;
+}
+
 // ---------------------------------------------------------------------------
 // Node definition
 // ---------------------------------------------------------------------------
@@ -871,8 +1208,65 @@ export class Nx3Soap implements INodeType {
 				placeholder:
 					'SELECT TOP (100) [ITMREF_0], [ITMDES1_0] FROM [basex3].[SEED].[ITMMASTER]',
 				description:
-					'SQL query executed against the Sage X3 database via the ChatX3 sub-program. Read-only style — use SQL Analyse to validate the syntax, SQL Select to fetch rows.',
+					'SQL query executed against the Sage X3 database via the ChatX3 sub-program. Read-only style — use SQL Analyse to validate the syntax, SQL Select to fetch rows. Supports {{name}} placeholders and [[optional clauses]] defined in Query Parameters.',
 				displayOptions: { show: { operation: SQL_OPS } },
+			},
+			{
+				displayName: 'Query Parameters',
+				name: 'sqlParameters',
+				type: 'fixedCollection',
+				typeOptions: { multipleValues: true },
+				default: {},
+				placeholder: 'Add parameter',
+				displayOptions: { show: { operation: SQL_OPS } },
+				description:
+					'Named filter values substituted into the query. Write {{name}} where the value goes — never inside quotes, the value brings its own. Wrap a clause in [[ ... ]] to drop it entirely when its parameter is empty, e.g. [[AND CREUSR_0 = {{creator}}]]',
+				options: [
+					{
+						name: 'parameter',
+						displayName: 'Parameter',
+						values: [
+							{
+								displayName: 'Name',
+								name: 'name',
+								type: 'string',
+								default: '',
+								placeholder: 'creator',
+								description: 'Name used as {{name}} in the query',
+							},
+							{
+								displayName: 'Type',
+								name: 'type',
+								type: 'options',
+								default: 'text',
+								description: 'How the value is escaped before it reaches the query',
+								options: [
+									{ name: 'Boolean', value: 'boolean', description: 'Rendered as 1 or 0' },
+									{
+										name: 'Date',
+										value: 'date',
+										description: 'YYYY-MM-DD or ISO-8601, rendered quoted',
+									},
+									{
+										name: 'List',
+										value: 'list',
+										description:
+											'Comma-separated values, each quoted separately — for IN ({{name}})',
+									},
+									{ name: 'Number', value: 'number', description: 'Validated numeric, unquoted' },
+									{ name: 'Text', value: 'text', description: 'Quoted, embedded quotes doubled' },
+								],
+							},
+							{
+								displayName: 'Value',
+								name: 'value',
+								type: 'string',
+								default: '',
+								description: 'Leave empty to drop any [[ ... ]] clause that uses this parameter.',
+							},
+						],
+					},
+				],
 			},
 			{
 				displayName: 'SQL Options (Optional)',
@@ -898,6 +1292,38 @@ export class Nx3Soap implements INodeType {
 						default: 0,
 						typeOptions: { minValue: 1 },
 						description: 'Cap the SQL execution time in milliseconds',
+					},
+				],
+			},
+			{
+				displayName: 'Simplify',
+				name: 'simplify',
+				type: 'boolean',
+				default: false,
+				// Default stays false on purpose: n8n applies schema defaults to
+				// already-saved workflows, so flipping it would silently rewrite the
+				// output of every existing SQL Select node.
+				displayOptions: { show: { operation: ['sqlSelect'] } },
+				description:
+					'Whether to return just the result rows, with the real column names restored from the query instead of the generic Col_1, Col_2 keys returned by Sage X3',
+			},
+			{
+				displayName: 'Row Format',
+				name: 'rowFormat',
+				type: 'options',
+				default: 'objects',
+				displayOptions: { show: { operation: ['sqlSelect'], simplify: [true] } },
+				description: 'How each row is shaped in the simplified output',
+				options: [
+					{
+						name: 'Arrays',
+						value: 'arrays',
+						description: 'Values only, ordered like columns — compact, ideal for an AI Agent',
+					},
+					{
+						name: 'Objects',
+						value: 'objects',
+						description: 'One key per column — easiest to reference in expressions',
 					},
 				],
 			},
@@ -1054,6 +1480,9 @@ export class Nx3Soap implements INodeType {
 
 				let envelope: string;
 				let inputXmlSent: string;
+				// Set by the SQL branch: the query after parameter substitution, used
+				// later to recover the real column names for the Simplify output.
+				let sqlFinalQuery: string | undefined;
 				let metaForOutput:
 					| { kind: 'object'; action: string; object: string; ident: string; transaction: string }
 					| { kind: 'raw'; publicName: string };
@@ -1065,12 +1494,34 @@ export class Nx3Soap implements INodeType {
 					metaForOutput = { kind: 'raw', publicName };
 				} else if (SQL_OPS.includes(operation)) {
 					// XOBJECT is fixed to 'SQL'; XDATAJSON = { query, context?: { max_lines?, max_time? } }.
-					const query = (this.getNodeParameter('sqlQuery', i, '') as string).trim();
+					let query = (this.getNodeParameter('sqlQuery', i, '') as string).trim();
 					if (!query) {
 						throw new NodeOperationError(this.getNode(), 'SQL Query is required', {
 							itemIndex: i,
 						});
 					}
+
+					// Metabase-style {{name}} / [[optional clause]] resolution. Values are
+					// escaped per type, never concatenated raw.
+					const sqlParams = this.getNodeParameter(
+						'sqlParameters.parameter',
+						i,
+						[],
+					) as SqlParam[];
+					try {
+						query = applyQueryParameters(query, sqlParams).trim();
+					} catch (e) {
+						throw new NodeOperationError(this.getNode(), (e as Error).message, { itemIndex: i });
+					}
+					if (!query) {
+						throw new NodeOperationError(
+							this.getNode(),
+							'The SQL query is empty once the optional [[ ... ]] clauses were removed',
+							{ itemIndex: i },
+						);
+					}
+					sqlFinalQuery = query;
+
 					const sqlOpts = this.getNodeParameter('sqlOptions', i, {}) as IDataObject;
 					const sqlCtx: IDataObject = {};
 					if (typeof sqlOpts.maxLines === 'number' && sqlOpts.maxLines > 0) {
@@ -1245,8 +1696,23 @@ export class Nx3Soap implements INodeType {
 
 				const parsed = parseRunResponse(rawText);
 
+				// Simplify only applies to SQL Select, and only when the payload really
+				// is row-shaped; anything else falls through to the standard envelope.
+				const simplifySql =
+					sqlFinalQuery !== undefined &&
+					(this.getNodeParameter('simplify', i, false) as boolean);
+				const simplified = simplifySql
+					? buildSqlSimplifiedOutput(
+							parsed,
+							sqlFinalQuery as string,
+							this.getNodeParameter('rowFormat', i, 'objects') as 'arrays' | 'objects',
+						)
+					: undefined;
+
 				let output: IDataObject;
-				if (metaForOutput.kind === 'object') {
+				if (simplified !== undefined) {
+					output = simplified;
+				} else if (metaForOutput.kind === 'object') {
 					output = buildObjectOperationOutput({
 						action: metaForOutput.action,
 						object: metaForOutput.object,
@@ -1258,6 +1724,9 @@ export class Nx3Soap implements INodeType {
 						reshapeOpts,
 						raw: rawText,
 					});
+					// Asked for Simplify but the response was not row-shaped — say so
+					// instead of silently returning a different structure.
+					if (simplifySql) output.simplified = false;
 				} else {
 					output = {
 						success: parsed.xsuccess ?? parsed.status === 1,

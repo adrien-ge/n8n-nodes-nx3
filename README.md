@@ -40,16 +40,22 @@ Build the package first with `npm install && npm run build`, then restart the co
 
 ## Operations
 
-The node exposes one resource (the X3 object API) with the following operations:
-
 | Operation | X3 action | Description |
 | --- | --- | --- |
-| **Read X3 Object** | `READ` | Read an object by its identifier and return its full field tree |
-| **Create X3 Object** | `CREATE` | Create a new object from a JSON payload |
-| **Modify X3 Object** | `MODIFY` | Update fields of an existing object |
+| **Read Sage X3 Object** | `READ` | Read an object by its identifier and return its full field tree |
+| **List Sage X3 Objects** | `LIST` | List records of an object, with optional selection criteria |
+| **Create Sage X3 Object** | `CREATE` | Create a new object from a JSON payload |
+| **Modify Sage X3 Object** | `MODIFY` | Update fields of an existing object |
+| **Describe Sage X3 Object** | `DESC` | Get the local-menus and field metadata of an object class |
+| **Custom Sage X3 Action** | *(free text)* | Send any `XACTION` the patch exposes, including future ones |
+| **SQL Analyse** | `ANALYSE` | Check that a SQL query is valid, without returning rows |
+| **SQL Select** | `SELECT` | Execute a SQL SELECT and return the rows |
 | **Run Sub-Program (Advanced)** | `run` | Call any X3 sub-program with a raw input payload (escape hatch) |
 
-> The patch ChatX3 currently supports READ, CREATE and MODIFY. Table-type objects are not yet handled.
+The **Action Code** field is always visible and pre-filled from the operation you
+pick, so you can see exactly which `XACTION` is sent — and override it if needed.
+
+> Table-type objects are not handled by the ChatX3 patch yet.
 
 ## Credentials
 
@@ -104,6 +110,71 @@ Example Create payload:
   }
 }
 ```
+
+## SQL operations
+
+**SQL Analyse** validates a query without running it; **SQL Select** runs it and
+returns the rows. Both accept optional `Max Lines` / `Max Time (Ms)` caps.
+
+### Query parameters
+
+Rather than concatenating values into the query — unsafe, especially when an AI
+Agent supplies them — declare them under **Query Parameters** and reference them
+with `{{name}}`:
+
+```sql
+SELECT TOP (100) [USR_0], [CREUSR_0], [CREDAT_0]
+FROM   [AUTILIS]
+WHERE  USR_0 IN ({{logins}})
+  AND  CREDAT_0 BETWEEN {{from}} AND {{to}}
+[[AND  CREUSR_0 = {{creator}}]]
+```
+
+- Each value is escaped according to its **Type** and produces a *complete*
+  literal — so never wrap `{{name}}` in quotes yourself.
+- `[[ ... ]]` marks an **optional clause**: it is dropped entirely when its
+  parameters are empty, and kept otherwise. Ideal for filters an agent may or
+  may not fill in.
+- A `{{name}}` used outside an optional clause with no value raises a clear
+  error rather than silently changing the query.
+
+| Type | Rendering | Use for |
+| --- | --- | --- |
+| Text | `'value'`, embedded quotes doubled | `=`, `LIKE` (pass `%foo%` as the value) |
+| Number | bare, validated numeric | `>`, `<`, `>=` |
+| Date | quoted, `YYYY-MM-DD` or ISO-8601 | `BETWEEN`, comparisons |
+| Boolean | `1` / `0` | flags |
+| List | `'a','b','c'` — comma-split, each quoted | `IN ({{name}})` |
+
+> A List value cannot itself contain a comma, since the comma is the separator.
+
+### Simplify
+
+Sage X3 returns SQL rows with generic keys — `Col_1`, `Col_2`, … — losing the
+link to the selected columns. Turn on **Simplify** (SQL Select only) to get the
+rows with their real names restored from your query:
+
+```json
+{
+  "success": true,
+  "rowCount": 3,
+  "columns": ["USR_0", "CREUSR_0", "CREDAT_0"],
+  "rows": [{ "USR_0": "ADMCA", "CREUSR_0": "ADMIN", "CREDAT_0": "2015-08-14T00:00:00Z" }],
+  "trace": "F38585"
+}
+```
+
+**Row Format** then chooses the row shape:
+
+- **Objects** (default) — one key per column, easiest for expressions such as
+  `{{ $json.rows[0].USR_0 }}` and rendered natively by the n8n Table view.
+- **Arrays** — values only, ordered like `columns`. Far more compact, which
+  matters when the rows are fed to an AI Agent.
+
+The renaming is best-effort and never reorders or drops data: with `SELECT *`,
+an unresolvable expression, or any count mismatch, the original `Col_N` keys are
+kept as-is. Leave Simplify off to get the full envelope (`data`, `status`,
+`sessionId`, `technicalInfos`).
 
 ## Output
 
