@@ -1092,8 +1092,10 @@ export class Nx3Soap implements INodeType {
 		icon: 'file:nx3.svg',
 		group: ['transform'],
 		version: 1,
+		// Shows the real XACTION rather than the internal operation value, and never
+		// renders "undefined" for operations that have no object (SQL, Run).
 		subtitle:
-			'={{$parameter["operation"] + ": " + ($parameter["object"] || $parameter["publicName"]) + ($parameter["ident"] ? " (" + $parameter["ident"] + ")" : "")}}',
+			'={{ $parameter["operation"] === "sqlSelect" ? "SQL Select" : $parameter["operation"] === "sqlAnalyse" ? "SQL Analyse" : $parameter["operation"] === "runRaw" ? "run: " + ($parameter["publicName"] || "") : ($parameter["actionCode"] || $parameter["operation"]) + ($parameter["object"] ? ": " + $parameter["object"] : "") + ($parameter["ident"] ? " (" + $parameter["ident"] + ")" : "") }}',
 		description:
 			'Read, create or modify a Sage X3 object via the XCHATX3OBJ sub-program (JSON in, JSON out)',
 		defaults: { name: 'IntellX for Sage X3' },
