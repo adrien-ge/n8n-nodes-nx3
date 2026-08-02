@@ -4,3 +4,7 @@ _backup
 .DS_Store
 **/.DS_Store
 .claude
+
+# auto-changelog output is redirected here so releases never overwrite the
+# hand-written CHANGELOG.md
+CHANGELOG.auto.md
