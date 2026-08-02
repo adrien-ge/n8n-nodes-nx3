@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This file is written by hand. `auto-changelog` is redirected to
 `CHANGELOG.auto.md` (git-ignored) so releases never overwrite it.
 
+## [Unreleased]
+
+### Added
+
+- **Contains** parameter type: the value is wrapped in `%` for a `LIKE` search,
+  and any `%`, `_` or `[` it contains is escaped so it stays a literal
+  character. Searching for `remise 50%` no longer matches everything starting
+  with `remise 50`.
+
+### Changed
+
+- Simplify output is now just `{ rowCount, columns, rows }`. `success`,
+  `messages` and `trace` reappear only when the call failed, so failures stay
+  visible while the happy path stays cheap to read for an AI Agent.
+- SQL dates are returned as plain `YYYY-MM-DD`, and X3's `0000-00-00` "not set"
+  sentinel becomes `null`. The time part is dropped only when it is exactly
+  midnight UTC, so a genuine timestamp is never truncated.
+
+### Documentation
+
+- Warn, in the node fields and the README, that a `$fromAI` call needs a fourth
+  argument (an empty default) for an optional filter — without it n8n makes the
+  field mandatory and the model can never skip the filter.
+
 ## [0.4.0] - 2026-08-02
 
 First release published automatically by GitHub Actions with npm provenance.

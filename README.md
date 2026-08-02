@@ -180,11 +180,16 @@ WHERE  USR_0 IN ({{logins}})
 
 | Type | Rendering | Use for |
 | --- | --- | --- |
-| Text | `'value'`, embedded quotes doubled | `=`, `LIKE` (pass `%foo%` as the value) |
+| Text | `'value'`, embedded quotes doubled | `=`, or a `LIKE` where you write the pattern yourself |
+| Contains | `'%value%'`, with `%` `_` `[` inside the value escaped | `LIKE {{name}}` — type `dupont`, not `%dupont%` |
 | Number | bare, validated numeric | `>`, `<`, `>=` |
 | Date | quoted, `YYYY-MM-DD` or ISO-8601 | `BETWEEN`, comparisons |
 | Boolean | `1` / `0` | flags |
 | List | `'a','b','c'` — comma-split, each quoted | `IN ({{name}})` |
+
+> **Contains** escapes the LIKE wildcards contained in the value, so searching
+> for `remise 50%` looks for that exact text instead of matching everything
+> starting with `remise 50`.
 
 > Use **List** — not Text — for `IN ({{name}})`. A Text value holding `a,b`
 > becomes the single literal `'a,b'` and matches nothing; the node detects that
@@ -199,13 +204,20 @@ rows with their real names restored from your query:
 
 ```json
 {
-  "success": true,
   "rowCount": 3,
   "columns": ["USR_0", "CREUSR_0", "CREDAT_0"],
-  "rows": [{ "USR_0": "ADMCA", "CREUSR_0": "ADMIN", "CREDAT_0": "2015-08-14T00:00:00Z" }],
-  "trace": "F38585"
+  "rows": [{ "USR_0": "ADMCA", "CREUSR_0": "ADMIN", "CREDAT_0": "2015-08-14" }]
 }
 ```
+
+The envelope stays down to the data itself. `success`, `messages` and `trace`
+only appear when something went wrong, so a failure is never silent while the
+happy path stays cheap to read — which matters when the rows feed an AI Agent.
+
+Dates are returned as plain `YYYY-MM-DD`, and X3's `0000-00-00` "not set"
+sentinel becomes `null` — a model reads `null` as empty, whereas `0000-00-00`
+looks like a real date. The time part is only dropped when it is exactly
+midnight UTC, so a genuine timestamp keeps its full value.
 
 **Row Format** then chooses the row shape:
 

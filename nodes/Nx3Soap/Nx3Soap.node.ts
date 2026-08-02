@@ -357,7 +357,7 @@ function reshapeX3Data(
 // SQL query helpers (parameters + column names)
 // ---------------------------------------------------------------------------
 
-type SqlParamType = 'boolean' | 'date' | 'list' | 'number' | 'text';
+type SqlParamType = 'boolean' | 'contains' | 'date' | 'list' | 'number' | 'text';
 
 interface SqlParam {
 	name: string;
@@ -401,6 +401,17 @@ function escapeSqlValue(name: string, type: SqlParamType, raw: string): string {
 				);
 			}
 			return escapeSqlText(name, value);
+		case 'contains': {
+			// Wildcards inside the value must not act as wildcards themselves, so they
+			// are neutralised with T-SQL bracket escaping before the surrounding %.
+			// `[` is escaped first, otherwise the brackets added just after would be
+			// escaped in turn.
+			const likeEscaped = value
+				.replace(/\[/g, '[[]')
+				.replace(/%/g, '[%]')
+				.replace(/_/g, '[_]');
+			return escapeSqlText(name, `%${likeEscaped}%`);
+		}
 		case 'list': {
 			// "a, b ,c" -> 'a','b','c' — each element escaped on its own so the
 			// result can be dropped straight into an IN (...) clause.
@@ -992,6 +1003,19 @@ function buildObjectOperationOutput(args: {
 }
 
 /**
+ * Turn an X3 date into a plain `YYYY-MM-DD`, and its "not set" sentinel into
+ * null. The time part is only dropped when it is exactly midnight UTC, so a
+ * genuine timestamp keeps its full value — the conversion never loses data.
+ */
+function normalizeX3Date(value: unknown): unknown {
+	if (typeof value !== 'string') return value;
+	const withTime = value.match(/^(\d{4}-\d{2}-\d{2})T00:00:00(?:\.0+)?Z$/);
+	const day = withTime ? withTime[1] : /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined;
+	if (day === undefined) return value;
+	return day === '0000-00-00' ? null : day;
+}
+
+/**
  * Locate the row array in a SQL response. X3 answers with a plain array of flat
  * objects, so this stays deliberately small; `recognised: false` tells the
  * caller to fall back to the full envelope rather than invent a shape.
@@ -1051,32 +1075,34 @@ function buildSqlSimplifiedOutput(
 	const columns = resolveSqlColumns(sameShape ? keys : [], deriveColumnNames(query));
 	const labels = columns.length === keys.length ? columns : keys;
 
-	const output: IDataObject = {
-		success: parsed.xsuccess ?? parsed.status === 1,
-		rowCount: rows.length,
-		columns,
-		rows:
-			rowFormat === 'arrays'
-				? rows.map((row) => keys.map((key) => row[key]))
-				: rows.map((row) => {
-						const mapped: IDataObject = {};
-						keys.forEach((key, index) => {
-							mapped[labels[index]] = row[key];
-						});
-						return mapped;
-					}),
-	};
+	const success = parsed.xsuccess ?? parsed.status === 1;
 
-	// Keep only real user messages — the bare {trace} entry is already surfaced
-	// through `trace`, so dropping it keeps the happy path clean while errors
-	// and warnings stay visible.
+	// The happy path stays down to the data itself. `success` and `trace` only
+	// reappear when something went wrong, where they are worth the extra tokens.
+	const output: IDataObject = {};
+	if (!success) output.success = false;
+	output.rowCount = rows.length;
+	output.columns = columns;
+	output.rows =
+		rowFormat === 'arrays'
+			? rows.map((row) => keys.map((key) => normalizeX3Date(row[key])))
+			: rows.map((row) => {
+					const mapped: IDataObject = {};
+					keys.forEach((key, index) => {
+						mapped[labels[index]] = normalizeX3Date(row[key]) as IDataObject[string];
+					});
+					return mapped;
+				});
+
+	// Keep only real user messages — the bare {trace} entry carries no
+	// information for the caller.
 	const rawMessages = Array.isArray(parsed.xmessages) ? (parsed.xmessages as IDataObject[]) : [];
 	const realMessages = rawMessages.filter(
 		(m) => m !== null && typeof m === 'object' && Object.keys(m).some((k) => k !== 'trace'),
 	);
 	if (realMessages.length > 0) output.messages = realMessages;
 	else if (parsed.soapMessages.length > 0) output.messages = parsed.soapMessages;
-	if (parsed.xtrace !== undefined) output.trace = parsed.xtrace;
+	if (!success && parsed.xtrace !== undefined) output.trace = parsed.xtrace;
 
 	return output;
 }
@@ -1369,6 +1395,11 @@ export class Nx3Soap implements INodeType {
 								description: 'How the value is escaped before it reaches the query',
 								options: [
 									{ name: 'Boolean', value: 'boolean', description: 'Rendered as 1 or 0' },
+									{
+										name: 'Contains',
+										value: 'contains',
+										description: 'Wrapped in % for a LIKE search — type dupont, get \'%dupont%\'. Any % or _ inside the value is escaped so it stays a literal character.',
+									},
 									{
 										name: 'Date',
 										value: 'date',
