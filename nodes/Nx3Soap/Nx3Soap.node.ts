@@ -1407,12 +1407,13 @@ export class Nx3Soap implements INodeType {
 						description: 'Cap the number of rows returned',
 					},
 					{
-						displayName: 'Max Time (Ms)',
+						displayName: 'Max Time (Seconds)',
 						name: 'maxTime',
 						type: 'number',
 						default: 0,
 						typeOptions: { minValue: 1 },
-						description: 'Cap the SQL execution time in milliseconds',
+						description:
+							'Cap the SQL execution time inside Sage X3, in seconds. Keep it below the node Request Timeout in Advanced Options, otherwise the HTTP request gives up first.',
 					},
 				],
 			},

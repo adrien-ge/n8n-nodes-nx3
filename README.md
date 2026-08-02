@@ -114,7 +114,12 @@ Example Create payload:
 ## SQL operations
 
 **SQL Analyse** validates a query without running it; **SQL Select** runs it and
-returns the rows. Both accept optional `Max Lines` / `Max Time (Ms)` caps.
+returns the rows. Both accept optional `Max Lines` and `Max Time (Seconds)` caps,
+sent to X3 as `context.max_lines` and `context.max_time`.
+
+> `Max Time` caps the execution *inside X3*, while `Request Timeout` in Advanced
+> Options caps the HTTP call (30 s by default). Keep the former below the latter,
+> or the request gives up before X3 does.
 
 ### Query parameters
 
