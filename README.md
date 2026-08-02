@@ -291,6 +291,31 @@ Two ways to wire a SQL tool, with very different safety profiles:
   Query Parameters. The model cannot write SQL, values are escaped by the node,
   and unfilled filters disappear on their own. Prefer this one.
 
+### Make optional filters actually optional
+
+`$fromAI('name', 'description', 'string')` produces a **mandatory** field: n8n
+only marks it optional when the call carries a fourth argument, the default
+value. Without it the model is forced to supply a value on every call, and an
+`[[ ... ]]` clause can never be dropped — the call is rejected before it even
+reaches the node, with `Received tool input did not match expected schema`.
+
+So for every parameter that backs an optional filter, end the call with an empty
+default:
+
+```
+={{ $fromAI('creator', 'Creator code. Leave empty to skip this filter', 'string', '') }}
+```
+
+The red asterisk next to the field in the tool's Test dialog disappears once it
+is right. Keep the default off for genuinely required inputs — reading an object
+without its identifier makes no sense.
+
+> The JSON schema n8n advertises to the client lists no `required` fields, but
+> the runtime validation still rejects a missing one. A model that correctly
+> omits a filter therefore fails on a schema that told it the field was optional.
+
+### Error handling
+
 Network failures (timeout, connection refused, unknown host, unreachable network)
 are turned into one-sentence actionable messages, so the agent can decide whether
 to retry, ask the user, or report the failure instead of hanging.

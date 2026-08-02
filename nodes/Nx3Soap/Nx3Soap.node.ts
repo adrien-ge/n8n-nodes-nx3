@@ -1347,7 +1347,7 @@ export class Nx3Soap implements INodeType {
 				placeholder: 'Add parameter',
 				displayOptions: { show: { operation: SQL_OPS } },
 				description:
-					'Named filter values substituted into the query. Write {{name}} where the value goes — never inside quotes, the value brings its own. Wrap a clause in [[ ... ]] to drop it entirely when its parameter is empty, e.g. [[AND CREUSR_0 = {{creator}}]]',
+					'Named filter values substituted into the query. Write {{name}} where the value goes — never inside quotes, the value brings its own. Wrap a clause in [[ ... ]] to drop it entirely when its parameter is empty, e.g. [[AND CREUSR_0 = {{creator}}]]. As an AI tool, give each $fromAI an empty default so the model may omit the filter: $fromAI(\'creator\', \'...\', \'string\', \'\')',
 				options: [
 					{
 						name: 'parameter',
@@ -1389,7 +1389,8 @@ export class Nx3Soap implements INodeType {
 								name: 'value',
 								type: 'string',
 								default: '',
-								description: 'Leave empty to drop any [[ ... ]] clause that uses this parameter.',
+								description:
+									'Leave empty to drop any [[ ... ]] clause that uses this parameter. When the model fills this in, end the call with an empty default — $fromAI(\'name\', \'...\', \'string\', \'\') — otherwise n8n makes the field mandatory and the model can never skip the filter.',
 							},
 						],
 					},
