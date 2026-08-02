@@ -1092,10 +1092,16 @@ export class Nx3Soap implements INodeType {
 		icon: 'file:nx3.svg',
 		group: ['transform'],
 		version: 1,
-		// Shows the real XACTION rather than the internal operation value, and never
-		// renders "undefined" for operations that have no object (SQL, Run).
+		// Shows the real XACTION rather than the internal operation value.
+		//
+		// Deliberately limited to `operation`, `actionCode` and `object`: on a node used
+		// as an AI tool, any field left to the model is a $fromAI expression with no
+		// design-time value, and reading one here makes the whole subtitle fail — the
+		// node then renders with no subtitle at all. `ident` is the field most often
+		// delegated to the model, so it is left out; `object` is usually pinned and
+		// carries the useful context.
 		subtitle:
-			'={{ $parameter["operation"] === "sqlSelect" ? "SQL Select" : $parameter["operation"] === "sqlAnalyse" ? "SQL Analyse" : $parameter["operation"] === "runRaw" ? "run: " + ($parameter["publicName"] || "") : ($parameter["actionCode"] || $parameter["operation"]) + ($parameter["object"] ? ": " + $parameter["object"] : "") + ($parameter["ident"] ? " (" + $parameter["ident"] + ")" : "") }}',
+			'={{ $parameter["operation"] === "sqlSelect" ? "SQL Select" : $parameter["operation"] === "sqlAnalyse" ? "SQL Analyse" : $parameter["operation"] === "runRaw" ? "Run Sub-Program" : ($parameter["actionCode"] || $parameter["operation"]) + ($parameter["object"] ? ": " + $parameter["object"] : "") }}',
 		description:
 			'Read, create or modify a Sage X3 object via the XCHATX3OBJ sub-program (JSON in, JSON out)',
 		defaults: { name: 'IntellX for Sage X3' },
