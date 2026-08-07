@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This file is written by hand. `auto-changelog` is redirected to
 `CHANGELOG.auto.md` (git-ignored) so releases never overwrite it.
 
-## [Unreleased]
+## [0.5.1] - 2026-08-07
 
 ### Fixed
 
