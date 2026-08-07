@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This file is written by hand. `auto-changelog` is redirected to
 `CHANGELOG.auto.md` (git-ignored) so releases never overwrite it.
 
+## [Unreleased]
+
+### Fixed
+
+- Simplify now recovers the column names of a query that opens with a comment.
+  The SELECT list parser expected `SELECT` to be the very first token, so a
+  query introduced by a `/* ... */ ` documentation header — the usual shape for
+  a documented AI Agent tool — silently fell back to X3's generic `Col_1`,
+  `Col_2` keys. Comments are stripped before parsing, which also fixes inline
+  comments between two select items when they contain a comma or an unbalanced
+  parenthesis. String literals are left untouched, so a `--` inside a quoted
+  value is still data.
+
 ## [0.5.0] - 2026-08-03
 
 ### Added

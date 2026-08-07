@@ -226,6 +226,10 @@ midnight UTC, so a genuine timestamp keeps its full value.
 - **Arrays** — values only, ordered like `columns`. Far more compact, which
   matters when the rows are fed to an AI Agent.
 
+SQL comments are ignored when the column names are read, so a query may open
+with a `/* ... */` documentation header and carry comments between two select
+items. Quoted values are left alone — a `--` inside a string literal stays data.
+
 The renaming is best-effort and never reorders or drops data: with `SELECT *`,
 an unresolvable expression, or any count mismatch, the original `Col_N` keys are
 kept as-is. Leave Simplify off to get the full envelope (`data`, `status`,

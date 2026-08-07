@@ -624,6 +624,75 @@ function applyQueryParameters(query: string, params: SqlParam[]): string {
 	return substituteSqlParams(resolved, byName, maskNonCode(resolved));
 }
 
+/**
+ * Remove SQL comments while leaving string literals untouched. Queries often
+ * open with a documentation block, and carry comments between select items;
+ * both would otherwise hide the SELECT keyword or unbalance the item splitting.
+ * Each comment collapses to a single space so surrounding tokens stay separated.
+ */
+function stripSqlComments(query: string): string {
+	let out = '';
+	let i = 0;
+	let blockDepth = 0;
+
+	while (i < query.length) {
+		const c = query[i];
+		const next = query[i + 1];
+
+		if (blockDepth > 0) {
+			if (c === '/' && next === '*') {
+				blockDepth++;
+				i += 2;
+				continue;
+			}
+			if (c === '*' && next === '/') {
+				blockDepth--;
+				i += 2;
+				if (blockDepth === 0) out += ' ';
+				continue;
+			}
+			i++;
+			continue;
+		}
+
+		if (c === '-' && next === '-') {
+			while (i < query.length && query[i] !== '\n') i++;
+			out += ' ';
+			continue;
+		}
+
+		if (c === '/' && next === '*') {
+			blockDepth = 1;
+			i += 2;
+			continue;
+		}
+
+		if (c === "'" || c === '"') {
+			out += c;
+			i++;
+			while (i < query.length) {
+				out += query[i];
+				if (query[i] === c) {
+					if (query[i + 1] === c) {
+						out += query[i + 1];
+						i += 2;
+						continue;
+					}
+					i++;
+					break;
+				}
+				i++;
+			}
+			continue;
+		}
+
+		out += c;
+		i++;
+	}
+
+	return out;
+}
+
 function unquoteSqlIdentifier(token: string): string {
 	const t = token.trim();
 	if (t.startsWith('[') && t.endsWith(']')) return t.slice(1, -1);
@@ -713,7 +782,10 @@ function resolveColumnName(item: string): string | undefined {
  * answers with generic `Col_1`, `Col_2`, ... keys. Returns one entry per SELECT
  * item, `undefined` where the name cannot be determined (e.g. `SELECT *`).
  */
-function deriveColumnNames(query: string): Array<string | undefined> {
+function deriveColumnNames(rawQuery: string): Array<string | undefined> {
+	// Comments are dropped first: a leading documentation block would hide the
+	// SELECT keyword, and inline ones can unbalance the item splitting.
+	const query = stripSqlComments(rawQuery);
 	const selectMatch = query.match(/^\s*SELECT\s+/i);
 	if (!selectMatch) return [];
 	let rest = query.slice(selectMatch[0].length);
