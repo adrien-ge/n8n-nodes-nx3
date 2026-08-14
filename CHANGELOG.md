@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This file is written by hand. `auto-changelog` is redirected to
 `CHANGELOG.auto.md` (git-ignored) so releases never overwrite it.
 
+## [Unreleased]
+
+### Fixed
+
+- The credential test now exercises what the node actually calls: a **POST** on
+  `/soap-generic/…`. It previously issued a **GET** on `/soap-wsdl/…?wsdl` —
+  a different path *and* a different method — so it reported success against any
+  web server answering 200 to a GET, such as a reverse proxy or a SPA front-end
+  sitting in front of X3, while the node's POST was refused with 405. The
+  credential looked healthy and the failure only surfaced at execution time,
+  pointing the user at the node instead of at the Base URL.
+
+### Added
+
+- Actionable messages for HTTP failures, naming the URL that was called. A bare
+  "Request failed with status code 405" reads like a node defect; the node now
+  explains that the Base URL is not the SOAP endpoint and that a missing port is
+  the usual cause (Syracuse listens on 8124 or 8443, rarely on 443). Covers 401,
+  403, 404, 405, 407 and 502/503/504, and the credential test carries the same
+  wording. `httpStatus` and `url` are included in the item output when
+  "Continue on Fail" is enabled.
+
 ## [0.5.1] - 2026-08-07
 
 ### Fixed

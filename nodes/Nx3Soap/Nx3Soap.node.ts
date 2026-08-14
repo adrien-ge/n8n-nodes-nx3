@@ -313,6 +313,61 @@ function describeNetworkError(err: Error & { code?: string }): string | undefine
 }
 
 /**
+ * Pull an HTTP status out of whatever error shape the request helper threw.
+ * Different layers surface it differently, and the raw message is the last
+ * resort ("Request failed with status code 405").
+ */
+function extractHttpStatus(err: unknown): number | undefined {
+	const e = err as {
+		statusCode?: unknown;
+		httpCode?: unknown;
+		status?: unknown;
+		response?: { status?: unknown; statusCode?: unknown };
+		message?: unknown;
+	};
+	const candidates = [
+		e?.statusCode,
+		e?.httpCode,
+		e?.status,
+		e?.response?.status,
+		e?.response?.statusCode,
+	];
+	for (const c of candidates) {
+		const n = typeof c === 'string' ? Number(c) : c;
+		if (typeof n === 'number' && Number.isFinite(n) && n >= 100 && n <= 599) return n;
+	}
+	const m = typeof e?.message === 'string' ? /status code (\d{3})/i.exec(e.message) : null;
+	return m ? Number(m[1]) : undefined;
+}
+
+/**
+ * Turn an HTTP status into an actionable sentence naming the URL that was called.
+ * A bare "Request failed with status code 405" points the reader at the node,
+ * when the cause is almost always the credential Base URL.
+ */
+function describeHttpError(status: number, url: string): string | undefined {
+	if (status === 401) {
+		return `Sage X3 rejected the credentials (HTTP 401) at ${url} — check the Syracuse username and password`;
+	}
+	if (status === 403) {
+		return `Sage X3 refused access to the SOAP service (HTTP 403) at ${url} — the Syracuse user is not allowed to call the web service`;
+	}
+	if (status === 404) {
+		return `No SOAP service found at ${url} (HTTP 404) — check the host and port in the credential Base URL. The SOAP path is appended automatically, so Base URL must not contain it`;
+	}
+	if (status === 405) {
+		return `${url} answered 405 Method Not Allowed to a POST, so it is not the Sage X3 SOAP service. Base URL must be scheme + host + port only (e.g. https://x3-server:8124) — the SOAP path is appended automatically. A missing port is the most common cause: Syracuse usually listens on 8124 or 8443, not on 443`;
+	}
+	if (status === 407) {
+		return `A proxy requires authentication (HTTP 407) before reaching ${url}`;
+	}
+	if (status === 502 || status === 503 || status === 504) {
+		return `Sage X3, or a proxy in front of it, returned HTTP ${status} for ${url} — the service is down, restarting, or overloaded`;
+	}
+	return undefined;
+}
+
+/**
  * Drop trailing empty values from an array. X3 returns dimensioned fields with every
  * "slot" filled, even unused ones — e.g. `"CCE": ["PEND-001","","","","",""]` is really
  * a 1-value array padded to the field's max dimension. Trailing "" / null / undefined
@@ -1676,6 +1731,7 @@ export class Nx3Soap implements INodeType {
 
 		const credentials = await this.getCredentials('nx3SoapApi');
 		const baseUrl = String(credentials.baseUrl ?? '').replace(/\/+$/, '');
+		const soapUrl = `${baseUrl}${SOAP_PATH}`;
 		const allowSelfSigned = Boolean(credentials.allowSelfSigned);
 		const defaultCtx: CallContext = {
 			codeLang: String(credentials.codeLang ?? 'FRA'),
@@ -1902,7 +1958,7 @@ export class Nx3Soap implements INodeType {
 
 				const requestOptions: IHttpRequestOptions = {
 					method: 'POST',
-					url: `${baseUrl}${SOAP_PATH}`,
+					url: soapUrl,
 					headers: {
 						'Content-Type': 'text/xml; charset=utf-8',
 						SOAPAction: '""',
@@ -1999,12 +2055,23 @@ export class Nx3Soap implements INodeType {
 				returnData.push({ json: output, pairedItem: i });
 			} catch (error) {
 				const err = error as Error & { code?: string };
-				const networkHint = describeNetworkError(err);
-				const friendlyMessage = networkHint ?? err.message ?? 'Unknown error calling Sage X3';
+				const httpStatus = extractHttpStatus(err);
+				// HTTP first: a status means the server answered, so a transport-level
+				// hint would be misleading. Only then fall back to network causes.
+				const hint =
+					(httpStatus !== undefined ? describeHttpError(httpStatus, soapUrl) : undefined) ??
+					describeNetworkError(err);
+				const friendlyMessage = hint ?? err.message ?? 'Unknown error calling Sage X3';
 
 				if (this.continueOnFail()) {
 					returnData.push({
-						json: { error: friendlyMessage, code: err.code, raw: err.message },
+						json: {
+							error: friendlyMessage,
+							code: err.code,
+							httpStatus,
+							url: soapUrl,
+							raw: err.message,
+						},
 						pairedItem: i,
 					});
 					continue;
