@@ -1077,6 +1077,7 @@ function buildObjectOperationOutput(args: {
 	parsed: ParsedResponse;
 	includeResultXml: boolean;
 	includeRaw: boolean;
+	includeTechnicalInfos: boolean;
 	reshapeOpts: { compact: boolean; trimEmpty: boolean };
 	raw: string;
 }): IDataObject {
@@ -1088,6 +1089,7 @@ function buildObjectOperationOutput(args: {
 		parsed,
 		includeResultXml,
 		includeRaw,
+		includeTechnicalInfos,
 		reshapeOpts,
 		raw,
 	} = args;
@@ -1122,7 +1124,8 @@ function buildObjectOperationOutput(args: {
 	if (messages !== undefined) output.messages = messages as IDataObject;
 	if (parsed.xtrace !== undefined) output.trace = parsed.xtrace;
 	if (parsed.sessionId !== undefined) output.sessionId = parsed.sessionId;
-	if (Object.keys(parsed.technicalInfos).length > 0) output.technicalInfos = parsed.technicalInfos;
+	if (includeTechnicalInfos && Object.keys(parsed.technicalInfos).length > 0)
+		output.technicalInfos = parsed.technicalInfos;
 	if (includeResultXml && parsed.resultXml) output.result = debugResult(parsed.resultXml) as IDataObject;
 	if (includeRaw) output.raw = raw;
 
@@ -1683,6 +1686,14 @@ export class Nx3Soap implements INodeType {
 							'Whether to include the parsed X3 result payload (the resultXml content, navigable) in the output under the "result" key',
 					},
 					{
+						displayName: 'Include Technical Infos',
+						name: 'includeTechnicalInfos',
+						type: 'boolean',
+						default: false,
+						description:
+							'Whether to include the X3 pool and timing metrics (the SOAP technicalInfos block) in the output. Off by default: it is about a quarter of each item and carries nothing a workflow or an AI Agent can act on. Turn it on to diagnose pool contention or slow calls.',
+					},
+					{
 						displayName: 'Pool Alias Override',
 						name: 'poolAlias',
 						type: 'string',
@@ -1755,6 +1766,9 @@ export class Nx3Soap implements INodeType {
 				const includeResultXml = Boolean(advanced.includeResultXml);
 				const includeRaw = Boolean(advanced.includeRaw);
 				const includeRequest = Boolean(advanced.includeRequest);
+				// Off by default: pool and timing metrics are debug material, and when the
+				// node runs as an AI Agent tool every byte of them is paid for in tokens.
+				const includeTechnicalInfos = Boolean(advanced.includeTechnicalInfos);
 				// Default true: compact single-value arrays for readability. Pass advanced.compactArrays
 				// explicitly only when set (n8n collections may omit unset values).
 				const compactArrays =
@@ -2009,6 +2023,7 @@ export class Nx3Soap implements INodeType {
 						parsed,
 						includeResultXml,
 						includeRaw,
+						includeTechnicalInfos,
 						reshapeOpts,
 						raw: rawText,
 					});
@@ -2032,7 +2047,7 @@ export class Nx3Soap implements INodeType {
 					else if (parsed.soapMessages.length > 0) output.messages = parsed.soapMessages;
 					if (parsed.xtrace !== undefined) output.trace = parsed.xtrace;
 					if (parsed.sessionId !== undefined) output.sessionId = parsed.sessionId;
-					if (Object.keys(parsed.technicalInfos).length > 0)
+					if (includeTechnicalInfos && Object.keys(parsed.technicalInfos).length > 0)
 						output.technicalInfos = parsed.technicalInfos;
 					if (includeResultXml && parsed.resultXml) output.result = debugResult(parsed.resultXml) as IDataObject;
 					if (includeRaw) output.raw = rawText;
@@ -2046,7 +2061,11 @@ export class Nx3Soap implements INodeType {
 						parsedInput && typeof parsedInput === 'object'
 							? deepParseJsonStrings(parsedInput)
 							: inputXmlSent;
+					// The URL is the one thing the envelope cannot show, and it is what
+					// separates "same call, different server" from "same server,
+					// different folder" when two n8n instances disagree.
 					output.request = {
+						url: soapUrl,
 						input: input as IDataObject,
 						envelope,
 					};
