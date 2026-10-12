@@ -484,6 +484,85 @@ function escapeSqlValue(name: string, type: SqlParamType, raw: string): string {
 	}
 }
 
+const SQL_PARAM_TYPES: readonly SqlParamType[] = [
+	'boolean',
+	'contains',
+	'date',
+	'list',
+	'number',
+	'text',
+];
+
+/**
+ * Parse the "Query Parameters (JSON)" field into the same shape the Fields
+ * mode produces. The value usually arrives through an expression, so it may be
+ * an already-resolved array or a JSON string. Each entry is checked strictly:
+ * an unknown type is an error, never a silent fallback to Text, because the
+ * caller of a generic runner would otherwise get a differently escaped value
+ * than the one it asked for.
+ */
+function parseSqlParamsJson(raw: unknown): SqlParam[] {
+	let value: unknown = raw;
+	if (typeof value === 'string') {
+		const text = value.trim();
+		if (text === '') return [];
+		let parsedJson: unknown;
+		let invalid = false;
+		try {
+			parsedJson = JSON.parse(text);
+		} catch {
+			invalid = true;
+		}
+		if (invalid) throw new ApplicationError('Query Parameters (JSON) is not valid JSON');
+		value = parsedJson;
+	}
+	if (value === null || value === undefined) return [];
+	if (!Array.isArray(value)) {
+		throw new ApplicationError(
+			'Query Parameters (JSON) must be an array of { name, type, value } objects',
+		);
+	}
+	// Same character class as SQL_PARAM_PATTERN: a name the query can reference.
+	const nameRe = /^[A-Za-z0-9_.-]+$/;
+	return value.map((entry, index) => {
+		if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+			throw new ApplicationError(
+				`Query Parameters (JSON): entry #${index + 1} is not an object`,
+			);
+		}
+		const e = entry as Record<string, unknown>;
+		const name = typeof e.name === 'string' ? e.name.trim() : '';
+		if (!name || !nameRe.test(name)) {
+			throw new ApplicationError(
+				`Query Parameters (JSON): entry #${index + 1} needs a "name" made of letters, digits, _ . or -`,
+			);
+		}
+		const type = typeof e.type === 'string' ? e.type.trim().toLowerCase() : 'text';
+		if (!SQL_PARAM_TYPES.includes(type as SqlParamType)) {
+			throw new ApplicationError(
+				`Query Parameters (JSON): parameter "${name}" has unknown type "${String(e.type)}" (expected ${SQL_PARAM_TYPES.join(', ')})`,
+			);
+		}
+		const v = e.value;
+		let text: string;
+		if (v === null || v === undefined) text = '';
+		else if (Array.isArray(v)) text = v.map((x) => String(x ?? '').trim()).join(',');
+		else if (typeof v === 'object') {
+			throw new ApplicationError(
+				`Query Parameters (JSON): parameter "${name}" has an object value; pass a string, number, boolean or array`,
+			);
+		} else text = String(v);
+		return { name, type: type as SqlParamType, value: text };
+	});
+}
+
+/** Read a numeric cap that may arrive as a number or as a numeric string from an expression. */
+function readPositiveNumber(raw: unknown): number | undefined {
+	if (raw === null || raw === undefined || raw === '') return undefined;
+	const n = typeof raw === 'number' ? raw : Number(String(raw).trim());
+	return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 /** A parameter counts as provided only when it yields at least one value. */
 function isSqlParamProvided(param: SqlParam | undefined): boolean {
 	if (!param) return false;
@@ -1194,6 +1273,7 @@ function buildSqlSimplifiedOutput(
 	parsed: ParsedResponse,
 	query: string,
 	rowFormat: 'arrays' | 'objects',
+	maxLines?: number,
 ): IDataObject | undefined {
 	const { rows, recognised } = extractSqlRows(parsed.dataJson);
 	if (!recognised) return undefined;
@@ -1212,6 +1292,9 @@ function buildSqlSimplifiedOutput(
 	const output: IDataObject = {};
 	if (!success) output.success = false;
 	output.rowCount = rows.length;
+	// X3 stops at max_lines without saying so; a result that fills the cap is
+	// flagged so the caller (or the AI Agent) knows it may be looking at a slice.
+	if (maxLines !== undefined && rows.length >= maxLines) output.truncated = true;
 	output.columns = columns;
 	output.rows =
 		rowFormat === 'arrays'
@@ -1495,13 +1578,34 @@ export class Nx3Soap implements INodeType {
 				displayOptions: { show: { operation: SQL_OPS } },
 			},
 			{
+				displayName: 'Parameters Mode',
+				name: 'sqlParametersMode',
+				type: 'options',
+				default: 'fields',
+				displayOptions: { show: { operation: SQL_OPS } },
+				description: 'Where the {{name}} values come from',
+				options: [
+					{
+						name: 'Fields',
+						value: 'fields',
+						description: 'Declare each parameter below, one row per name',
+					},
+					{
+						name: 'JSON',
+						value: 'json',
+						description:
+							'Pass the whole parameter list as JSON, typically through an expression on the incoming item — for a generic sub-workflow that runs queries stored elsewhere',
+					},
+				],
+			},
+			{
 				displayName: 'Query Parameters',
 				name: 'sqlParameters',
 				type: 'fixedCollection',
 				typeOptions: { multipleValues: true },
 				default: {},
 				placeholder: 'Add parameter',
-				displayOptions: { show: { operation: SQL_OPS } },
+				displayOptions: { show: { operation: SQL_OPS, sqlParametersMode: ['fields'] } },
 				description:
 					'Named filter values substituted into the query. Write {{name}} where the value goes — never inside quotes, the value brings its own. Wrap a clause in [[ ... ]] to drop it entirely when its parameter is empty, e.g. [[AND CREUSR_0 = {{creator}}]]. As an AI tool, give each $fromAI an empty default so the model may omit the filter: $fromAI(\'creator\', \'...\', \'string\', \'\')',
 				options: [
@@ -1556,6 +1660,17 @@ export class Nx3Soap implements INodeType {
 						],
 					},
 				],
+			},
+			{
+				displayName: 'Query Parameters (JSON)',
+				name: 'sqlParametersJson',
+				type: 'json',
+				default: '[]',
+				displayOptions: { show: { operation: SQL_OPS, sqlParametersMode: ['json'] } },
+				description:
+					'Array of { "name", "type", "value" } objects. type is one of boolean, contains, date, list, number, text. value may be a string, a number, a boolean, null or an array (joined with commas for a List). Same escaping and [[ ... ]] rules as the Fields mode.',
+				placeholder:
+					'[{ "name": "customer", "type": "list", "value": "FR001,FR002" }, { "name": "from", "type": "date", "value": "2025-01-01" }]',
 			},
 			{
 				displayName: 'SQL Options (Optional)',
@@ -1785,6 +1900,7 @@ export class Nx3Soap implements INodeType {
 				// Set by the SQL branch: the query after parameter substitution, used
 				// later to recover the real column names for the Simplify output.
 				let sqlFinalQuery: string | undefined;
+				let sqlMaxLines: number | undefined;
 				let metaForOutput:
 					| { kind: 'object'; action: string; object: string; ident: string; transaction: string }
 					| { kind: 'raw'; publicName: string };
@@ -1805,12 +1921,12 @@ export class Nx3Soap implements INodeType {
 
 					// Metabase-style {{name}} / [[optional clause]] resolution. Values are
 					// escaped per type, never concatenated raw.
-					const sqlParams = this.getNodeParameter(
-						'sqlParameters.parameter',
-						i,
-						[],
-					) as SqlParam[];
+					const paramsMode = this.getNodeParameter('sqlParametersMode', i, 'fields') as string;
 					try {
+						const sqlParams =
+							paramsMode === 'json'
+								? parseSqlParamsJson(this.getNodeParameter('sqlParametersJson', i, '[]'))
+								: (this.getNodeParameter('sqlParameters.parameter', i, []) as SqlParam[]);
 						query = applyQueryParameters(query, sqlParams).trim();
 					} catch (e) {
 						throw new NodeOperationError(this.getNode(), (e as Error).message, { itemIndex: i });
@@ -1826,12 +1942,12 @@ export class Nx3Soap implements INodeType {
 
 					const sqlOpts = this.getNodeParameter('sqlOptions', i, {}) as IDataObject;
 					const sqlCtx: IDataObject = {};
-					if (typeof sqlOpts.maxLines === 'number' && sqlOpts.maxLines > 0) {
-						sqlCtx.max_lines = sqlOpts.maxLines;
-					}
-					if (typeof sqlOpts.maxTime === 'number' && sqlOpts.maxTime > 0) {
-						sqlCtx.max_time = sqlOpts.maxTime;
-					}
+					// Caps may come from an expression that yields a numeric string.
+					const maxLines = readPositiveNumber(sqlOpts.maxLines);
+					const maxTime = readPositiveNumber(sqlOpts.maxTime);
+					if (maxLines !== undefined) sqlCtx.max_lines = maxLines;
+					if (maxTime !== undefined) sqlCtx.max_time = maxTime;
+					sqlMaxLines = maxLines;
 					const sqlPayload: IDataObject = { query };
 					if (Object.keys(sqlCtx).length > 0) sqlPayload.context = sqlCtx;
 
@@ -2008,6 +2124,7 @@ export class Nx3Soap implements INodeType {
 							parsed,
 							sqlFinalQuery as string,
 							this.getNodeParameter('rowFormat', i, 'objects') as 'arrays' | 'objects',
+							sqlMaxLines,
 						)
 					: undefined;
 
