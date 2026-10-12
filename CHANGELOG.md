@@ -12,11 +12,15 @@ This file is written by hand. `auto-changelog` is redirected to
 
 ### Documentation
 
-- The Sage X3 installation guide (French and English, with screenshots) now
-  lives in `docs/`, moved in from the separate `chatx3/n8n-nodes-nx3`
-  repository so that everything is in one place. Section numbering and anchors
-  fixed on the way; the "n8n license patch" step, dropped from the French guide
-  in June, is dropped from the English one too.
+- One README, rebuilt as a single reference in the order a user needs it: how
+  it works, requirements, Sage X3 setup with screenshots, n8n install,
+  credential, operations with a worked example each (Read, List, Create,
+  Modify, Describe), SQL, output, advanced options, AI Agent and MCP, recipes,
+  troubleshooting. It absorbs the installation guide that lived in the
+  separate `chatx3/n8n-nodes-nx3` repository, which can now be retired. The
+  "n8n license patch" step, dropped from that guide's French version in June,
+  is not carried over. `README.fr.md` is the full French version of the same
+  document.
 - `examples/` removed: the workflows are better served as n8n.io templates than
   as JSON files in a node package.
 
