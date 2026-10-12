@@ -29,6 +29,38 @@ This file is written by hand. `auto-changelog` is redirected to
   403, 404, 405, 407 and 502/503/504, and the credential test carries the same
   wording. `httpStatus` and `url` are included in the item output when
   "Continue on Fail" is enabled.
+- **Include Technical Infos** advanced option. The X3 `technicalInfos` block
+  (pool and timing metrics) is now opt-in. On a typical READ it was about a
+  quarter of every item — 375 of 1,600 characters — and nothing in it is
+  actionable by a workflow or by an AI Agent, which paid for it in tokens on
+  every tool call. Turn it on to diagnose pool contention or slow calls.
+- **Include Request in Output** now also carries `url`, the SOAP endpoint that
+  was actually called. The envelope cannot show it, and it is what separates
+  "same call, different server" from "same server, different folder" when two
+  n8n instances disagree.
+
+### Changed
+
+- `technicalInfos` is no longer in the output by default (see above). Workflows
+  that read `$json.technicalInfos.…` must enable **Include Technical Infos** on
+  the node. `sessionId` is unaffected and still present for session chaining.
+
+### Documentation
+
+- README: new **Sage X3 prerequisites** section (ChatX3 patch, SOAP pool,
+  license endpoint, Syracuse and X3 user rights), condensed from the
+  installation guide at github.com/chatx3/n8n-nodes-nx3.
+- README: the List payload keys (`list_nb`, `list_filters`) and the List and
+  Describe output shapes, composite identifiers with `~`, the `nx3SoapTool`
+  type and MCP Server Trigger wiring, the `CUSTOM.` type prefix of a package
+  loaded from the `custom` folder, and three new troubleshooting rows (405,
+  `?` nodes after import, `$fromAI` schema error).
+- README: the credential test description matched the old GET on the WSDL; it
+  now describes the POST.
+- README: version history synced with this changelog (it stopped at 0.3.0).
+- `examples/`: the *Query Sage X3 in natural language* agent + MCP workflow,
+  sanitised (no credential ids, no API key, placeholder X3 user), plus the
+  ChatX3 agent and a Test_nX3 object-operations workflow.
 
 ## [0.5.1] - 2026-08-07
 

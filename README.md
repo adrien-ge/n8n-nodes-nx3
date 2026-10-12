@@ -12,6 +12,7 @@ clean, ready-to-use object. No XML wrangling required.
 [n8n](https://n8n.io/) is a [fair-code licensed](https://docs.n8n.io/reference/license/) workflow automation platform.
 
 [Installation](#installation)
+[Sage X3 prerequisites](#sage-x3-prerequisites)
 [Operations](#operations)
 [Credentials](#credentials)
 [Object parameters](#object-parameters)
@@ -43,6 +44,37 @@ docker run -d --name n8n -p 5678:5678 \
 ```
 
 Build the package first with `npm install && npm run build`, then restart the container.
+
+> A package loaded from the `custom` folder is registered by n8n under the type
+> `CUSTOM.nx3Soap` (and `CUSTOM.nx3SoapTool`), not `n8n-nodes-nx3.nx3Soap`. A
+> workflow exported from an instance where the package was installed from npm
+> shows its nodes with a `?` icon and asks to install the package. Edit the
+> `type` of the nodes in the JSON before importing, or install from npm instead.
+
+## Sage X3 prerequisites
+
+The node talks to the `XCHATX3OBJ` sub-program delivered by the **ChatX3 patch**.
+The X3 side has to be ready before the first call. The full walkthrough with
+screenshots lives in the [installation guide](https://github.com/chatx3/n8n-nodes-nx3)
+(French and English); the checklist is:
+
+1. **ChatX3 patch** integrated on the folder — *Development → Utilities →
+   Patches → Patch integration*. Run it on a test folder first and keep a backup.
+2. **A SOAP child process** on the Syracuse web server (at least one), and a
+   **web services pool** created and *started* on the folder. The pool alias is
+   what goes into the credential.
+3. **The X3 runtime server can reach the license endpoint** of ChatX3
+   (`https://akfcgzazfvqipbjvdemn.supabase.co`). The check runs once or twice a
+   week; behind a proxy or firewall, allow that URL outbound. No business data
+   and no credentials ever transit through it — the node talks to X3 directly.
+4. **Syracuse user**: security profile with `statusAndUsage → Read`.
+5. **X3 user** linked to that Syracuse user: *Web services connection = Yes*.
+
+When a call runs through the node, X3 sets `GXCHATX3OBJ=1`, `GWEBSERV=1`,
+`GSERVEUR=0`, `GBATCH=0` and `GIMPORT=0`, and the action executes exactly as if
+the user had typed it — standard, vertical and custom objects alike, with the
+user's function rights enforced. An object or action that opens an extra window
+beyond the base screen cannot be driven this way.
 
 ## Operations
 
@@ -86,7 +118,11 @@ You authenticate with your **Syracuse** user (the same credentials you use to lo
 | Request Config | | Default `requestConfig`. The node adds the JSON-mode flags automatically. |
 | Allow Self-Signed Certificates | | Skip TLS validation. Useful for on-prem X3 with a self-signed certificate; do not enable for production over the Internet. |
 
-The credential **Test** button calls the WSDL endpoint with your credentials to confirm connectivity.
+The credential **Test** button sends a real `POST` to the SOAP endpoint the node
+calls, with an empty `XCHATX3OBJ` payload. Reaching X3's answer proves the URL,
+the port, Basic auth and the pool all work; nothing is read or written. A 405 at
+this point means the Base URL is not the SOAP service — usually a missing port
+(Syracuse listens on 8124 or 8443, rarely on 443).
 
 ## Object parameters
 
@@ -95,7 +131,69 @@ Shown for Read, List, Create, Modify, Describe and Custom:
 - **Sage X3 Object Code** — the object code, e.g. `ITM` (items), `BPC` (customers), `SOH` (sales orders).
 - **Transaction Code** — X3 transaction (`XTRANSACTION`); leave empty for the default.
 - **Identifier** — the object's primary key (`XIDENT`). Required for Read and Modify. For Create it must usually match the key field in the data (e.g. `ITM0.ITMREF`) unless X3 generates it. Optional for Custom, hidden for List and Describe.
+  A composite key is written with `~` between its parts, in the order of the
+  object's key: `FIN311~NA021` for an item-site record, `FR012~BMS001~1~8` for
+  a standard cost (site, item, version, fiscal year).
 - **Data (JSON)** — the payload sent as `XDATAJSON`. Shown for Create, Modify, List (selection criteria) and Custom.
+
+### List payload and output
+
+List reads the object's main left list through an advanced selection. The
+payload takes two optional keys:
+
+```json
+{
+  "list_nb": 10,
+  "list_filters": "[F:BPA]CRY<>\"FR\" & [F:SOH]CUSORDREF<>\"\""
+}
+```
+
+- `list_nb` — number of rows to return. Default is the folder's `GNBGAUCHE`
+  parameter, or 100.
+- `list_filters` — an X3 selection expression on any field of the main table
+  (`[F:TABLE]FIELD` syntax). It is added to the object's own filters, which are
+  echoed back under `filters`.
+
+The output carries the column codes and titles once, and the rows as arrays:
+
+```json
+{
+  "table_count": 1193,
+  "list_count": 10,
+  "filters": { "CRITERE(0)": "1=1", "FILTSUP(0)": "SOHCAT < 4", "FILRAP(0)": "[F:BPA]CRY<>\"FR\"" },
+  "codes":  ["[F:SOH]SOHNUM", "[F:SOH]BPCORD", "[F:SOH]ORDDAT"],
+  "titles": ["Order no.", "Order customer", "Order date"],
+  "values": [["SOWDE0120012", "DE001", "2025-07-21"], ["SOWDE0120011", "DE001", "2025-12-21"]]
+}
+```
+
+`table_count` is the size of the whole table, `list_count` the number of rows
+returned. To feed one row per item downstream, split on `data.values` and map
+the positions through `data.codes`.
+
+### Describe output
+
+Describe returns the metadata of the object class: its screens, each with the
+fields (name, type, length, dimension, required flag, description, local menu
+number) and blocks, followed by the local menus used, with their lines. It is
+what an AI Agent should call before a Create to learn the payload shape.
+
+```json
+{
+  "screens": {
+    "screen_code": "ACV2",
+    "screen_name": "Activity codes",
+    "fields": [
+      { "name": "CODACT", "system_type": "Char", "length": 5, "dimension": 1, "required": true, "description": "Activity code", "type": "ACV" },
+      { "name": "FLACT", "menu_number": 1, "system_type": "Integer", "description": "Active", "type": "M" }
+    ],
+    "blocks": [{ "code": "10", "description": "Identifier", "type": "List" }]
+  },
+  "local_menus": [
+    { "menu_number": 1, "menu_name": "No/Yes", "lines": [{ "line_number": 1, "message": "No" }, { "line_number": 2, "message": "Yes" }] }
+  ]
+}
+```
 
 ### Data JSON conventions (from the ChatX3 patch)
 
@@ -233,7 +331,7 @@ items. Quoted values are left alone — a `--` inside a string literal stays dat
 The renaming is best-effort and never reorders or drops data: with `SELECT *`,
 an unresolvable expression, or any count mismatch, the original `Col_N` keys are
 kept as-is. Leave Simplify off to get the full envelope (`data`, `status`,
-`sessionId`, `technicalInfos`).
+`sessionId`, `messages`).
 
 ## Output
 
@@ -253,8 +351,7 @@ Object operations return a clean JSON object:
   },
   "messages": [{ "trace": "F1730" }, { "info": "Object created: ASS001" }],
   "trace": "F1730",
-  "sessionId": "6784",
-  "technicalInfos": { "poolEntryIdx": 6784, "totalDuration": 611 }
+  "sessionId": "6784"
 }
 ```
 
@@ -267,7 +364,7 @@ Object operations return a clean JSON object:
 | `messages` | X3 user messages: `info`, `error`, `alert`, and the `trace` entry. |
 | `trace` | The X3 trace name, surfaced for convenience (also present in `messages`). |
 | `sessionId` | The X3 pool entry that handled the call. Pass it back as **Pool ID Override** to chain calls on the same session. |
-| `technicalInfos` | Pool/performance metrics returned by X3. |
+| `technicalInfos` | Pool/performance metrics returned by X3 (`poolExecDuration`, `totalDuration`, …). Only present when **Include Technical Infos** is on; off by default because it is about a quarter of each item and only matters when diagnosing the X3 pool. |
 
 > X3 may report `success: true` while still including an `error` message (e.g. an access-level check). To gate a workflow strictly, test for errors with an IF node:
 > `{{ !($json.messages || []).some(m => m.error) }}`
@@ -290,13 +387,22 @@ options default to **off**.
 | Public Name Override | — | Call a different sub-program than `XCHATX3OBJ`. |
 | Include Request in Output | off | Add `request` (the JSON payload sent + the SOAP envelope) for debugging. |
 | Include Result in Output | off | Add `result` (the parsed X3 result payload, navigable) for debugging. |
+| Include Technical Infos | off | Add `technicalInfos` (X3 pool and timing metrics). Leave it off when the node feeds an AI Agent: it is pure token cost. |
 | Include Raw SOAP Response | off | Add `raw` (the full SOAP envelope as XML) for low-level transport debugging. |
 
 ## Use as an AI Agent tool
 
 This node has `usableAsTool` enabled, so it can be attached to an **AI Agent**
 node — for object operations ("find item BMS009", "create a customer") as well as
-SQL Select.
+SQL Select. n8n generates the tool variant on its own: it appears as
+`n8n-nodes-nx3.nx3SoapTool` in workflow JSON, with a **Description** field the
+model reads to pick the tool. The same tool nodes can be wired to an **MCP
+Server Trigger** to expose them to Claude, Cursor or any MCP client; see the
+*Query Sage X3 in natural language* template in [`examples/`](examples/) for a
+complete agent + MCP setup with 24 tools.
+
+Keep **Include Technical Infos** off and prefer **Row Format: Arrays** on tool
+nodes — both exist to keep the token cost of every tool call down.
 
 Two ways to wire a SQL tool, with very different safety profiles:
 
@@ -338,7 +444,7 @@ to retry, ask the user, or report the failure instead of hanging.
 
 ## Compatibility
 
-- Requires **n8n 1.x** (Nodes API v1).
+- Requires **n8n 1.x or 2.x** (Nodes API v1). Tested on n8n 2.17.
 - No runtime dependencies — response parsing is done without external libraries, so the node is compatible with n8n Cloud's verification requirements.
 - Tested against **Sage X3 V12** (`CAdxWebServiceXmlCC`, Apache Axis 1.4 SOAP stack) with the ChatX3 `XCHATX3OBJ` sub-program.
 
@@ -386,6 +492,9 @@ to retry, ask the user, or report the failure instead of hanging.
 | `Modification en cours sur un autre poste` | A previous READ still holds the object lock. Chain calls with **Pool ID Override**, or skip the READ and MODIFY directly. |
 | `Erreur zone [M:...]<field>` | Field validation failed — check that `Identifier` matches the key field in the data, value formats, and category counters. |
 | SQL Select returns 0 rows with an `IN` filter | The parameter is typed Text instead of **List**, so the values were sent as one single literal. |
+| `405 Method Not Allowed` | The Base URL is a web server, not the SOAP service — most often the port is missing (`:8124` or `:8443`). |
+| Imported nodes show a `?` icon and n8n asks to install `n8n-nodes-nx3` | The workflow was exported from an instance where the package came from npm, and this instance loads it from the `custom` folder (type `CUSTOM.nx3Soap`), or the reverse. Edit the node `type` in the JSON. |
+| `Received tool input did not match expected schema` | A `$fromAI` without a fourth argument makes the field mandatory. Add an empty default: `$fromAI('name', '...', 'string', '')`. |
 
 ## Resources
 
@@ -394,7 +503,21 @@ to retry, ask the user, or report the failure instead of hanging.
 
 ## Version history
 
-### 0.3.0
+The full history is in [CHANGELOG.md](CHANGELOG.md).
+
+### 0.5.1
+
+- Simplify recovers column names on a query that opens with a comment.
+
+### 0.5.0
+
+- **Contains** parameter type for `LIKE` searches, with wildcard escaping.
+- Simplify output reduced to `{ rowCount, columns, rows }`; SQL dates returned
+  as `YYYY-MM-DD` and the `0000-00-00` sentinel as `null`.
+
+### 0.4.0
+
+First release on npm. Includes everything prepared for 0.3.0:
 
 - **Describe Sage X3 Object** operation (`DESC`).
 - **Context (Optional)** envelope: per-call language and user override, response
