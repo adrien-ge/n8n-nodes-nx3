@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This file is written by hand. `auto-changelog` is redirected to
 `CHANGELOG.auto.md` (git-ignored) so releases never overwrite it.
 
+## [Unreleased]
+
+### Documentation
+
+- The Sage X3 installation guide (French and English, with screenshots) now
+  lives in `docs/`, moved in from the separate `chatx3/n8n-nodes-nx3`
+  repository so that everything is in one place. Section numbering and anchors
+  fixed on the way; the "n8n license patch" step, dropped from the French guide
+  in June, is dropped from the English one too.
+- `examples/` removed: the workflows are better served as n8n.io templates than
+  as JSON files in a node package.
+
 ## [0.5.2] - 2026-10-12
 
 ### Fixed

@@ -11,6 +11,10 @@ clean, ready-to-use object. No XML wrangling required.
 
 [n8n](https://n8n.io/) is a [fair-code licensed](https://docs.n8n.io/reference/license/) workflow automation platform.
 
+> Setting up the Sage X3 side (ChatX3 patch, SOAP pool, user rights)? Start with
+> the step-by-step **installation guide**:
+> [English](docs/installation-guide.en.md) · [Français](docs/installation-guide.fr.md).
+
 [Installation](#installation)
 [Sage X3 prerequisites](#sage-x3-prerequisites)
 [Operations](#operations)
@@ -55,8 +59,9 @@ Build the package first with `npm install && npm run build`, then restart the co
 
 The node talks to the `XCHATX3OBJ` sub-program delivered by the **ChatX3 patch**.
 The X3 side has to be ready before the first call. The full walkthrough with
-screenshots lives in the [installation guide](https://github.com/chatx3/n8n-nodes-nx3)
-(French and English); the checklist is:
+screenshots is in the installation guide —
+[English](docs/installation-guide.en.md) · [Français](docs/installation-guide.fr.md);
+the checklist is:
 
 1. **ChatX3 patch** integrated on the folder — *Development → Utilities →
    Patches → Patch integration*. Run it on a test folder first and keep a backup.
@@ -397,9 +402,9 @@ node — for object operations ("find item BMS009", "create a customer") as well
 SQL Select. n8n generates the tool variant on its own: it appears as
 `n8n-nodes-nx3.nx3SoapTool` in workflow JSON, with a **Description** field the
 model reads to pick the tool. The same tool nodes can be wired to an **MCP
-Server Trigger** to expose them to Claude, Cursor or any MCP client; see the
-*Query Sage X3 in natural language* template in [`examples/`](examples/) for a
-complete agent + MCP setup with 24 tools.
+Server Trigger** to expose them to Claude, Cursor or any MCP client; the
+*Query Sage X3 in natural language with an AI agent and an MCP server* template
+on n8n.io is a complete agent + MCP setup built on this node.
 
 Keep **Include Technical Infos** off and prefer **Row Format: Arrays** on tool
 nodes — both exist to keep the token cost of every tool call down.
