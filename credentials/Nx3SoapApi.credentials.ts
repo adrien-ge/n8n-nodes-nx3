@@ -28,7 +28,7 @@ export class Nx3SoapApi implements ICredentialType {
 			name: 'baseUrl',
 			type: 'string',
 			default: '',
-			placeholder: 'https://kronk:8124',
+			placeholder: 'e.g. https://x3.example.com:8124',
 			description:
 				'Scheme + host + port of the X3 server. The SOAP endpoint path is appended automatically by the node.',
 			required: true,
@@ -38,7 +38,7 @@ export class Nx3SoapApi implements ICredentialType {
 			name: 'username',
 			type: 'string',
 			default: '',
-			placeholder: 'admin',
+			placeholder: 'e.g. admin',
 			description: 'Syracuse user with permission to call the web service',
 			required: true,
 		},
@@ -163,8 +163,7 @@ export class Nx3SoapApi implements ICredentialType {
 				type: 'responseCode',
 				properties: {
 					value: 401,
-					message:
-						'Sage X3 rejected the credentials — check the Syracuse username and password.',
+					message: 'Sage X3 rejected the credentials — check the Syracuse username and password.',
 				},
 			},
 			{

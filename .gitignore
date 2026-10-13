@@ -8,3 +8,6 @@ _backup
 # auto-changelog output is redirected here so releases never overwrite the
 # hand-written CHANGELOG.md
 CHANGELOG.auto.md
+
+# local test workflows (carry credential ids)
+templates/dev/
