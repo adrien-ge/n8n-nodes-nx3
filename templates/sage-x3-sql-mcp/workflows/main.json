@@ -14,7 +14,7 @@
         0,
         0
       ],
-      "id": "a262a9e6-a2f9-4067-a37a-c8672a58e347",
+      "id": "5f565033-115b-4cb7-8df3-854a33999a36",
       "name": "Note - Overview"
     },
     {
@@ -30,7 +30,7 @@
         860,
         0
       ],
-      "id": "26f2b865-0bd9-4deb-b357-d3edfb8d9f44",
+      "id": "e0ba8e35-1d5d-4476-a6c4-4c33e5c5f370",
       "name": "Note - Setup required"
     },
     {
@@ -46,7 +46,7 @@
         0,
         820
       ],
-      "id": "24aaabfb-46c2-4fb6-996b-d521930482bb",
+      "id": "6a914daa-b010-4341-ba6a-161659504d2b",
       "name": "Note - 1 Conversation"
     },
     {
@@ -59,9 +59,9 @@
         60,
         1000
       ],
-      "id": "49610afd-d3e4-42d3-8ef6-e4827a234494",
+      "id": "f292c3b9-7917-4550-baad-07a66d21b0fc",
       "name": "When a user asks in the chat",
-      "webhookId": "298cb49e-624e-4884-9e09-8254a25d0764"
+      "webhookId": "b9009db2-879d-4896-8471-62cd076fc452"
     },
     {
       "parameters": {
@@ -76,7 +76,7 @@
         340,
         1000
       ],
-      "id": "674c01fb-eed5-4eaa-b8d3-8bc029a0505e",
+      "id": "ab064d32-c7cd-4a3e-9a0b-0f7584f9282c",
       "name": "Route the question to the right tool"
     },
     {
@@ -92,7 +92,7 @@
         280,
         1180
       ],
-      "id": "20fc4853-2e6b-41ee-9b19-17844c85974d",
+      "id": "17d6cac3-5700-485f-8010-63d8662b8a64",
       "name": "Language model (OpenRouter)"
     },
     {
@@ -103,7 +103,7 @@
         500,
         1180
       ],
-      "id": "fbcd6333-c3fc-4fa9-8b7c-05968b2f5b11",
+      "id": "d7520e99-07d9-4ab2-8c8d-edeaabdff65a",
       "name": "Conversation memory"
     },
     {
@@ -119,7 +119,7 @@
         860,
         820
       ],
-      "id": "043f5a26-ca43-4d36-b99c-4cf834c05f20",
+      "id": "0d4f9113-f7f3-4397-9377-dcc96dfc0186",
       "name": "Note - 2 MCP server"
     },
     {
@@ -133,15 +133,15 @@
         1140,
         1020
       ],
-      "id": "c5dd7b15-c45e-4865-9eb6-62ba13642d87",
+      "id": "baaf525a-0a81-4bda-b5b5-30818dc218f7",
       "name": "Expose the tools as an MCP server",
-      "webhookId": "ea902aad-8056-4d69-84bd-4d2204e0f7dd"
+      "webhookId": "5a376ab4-d3c3-40b4-8e73-6509f5aaff1f"
     },
     {
       "parameters": {
         "content": "## 3. SQL queries: two tools for 16 queries\n\n`x3_query_catalog` describes the queries (filters, types, required ones, caps); `x3_query_run` runs one by name with a `params` object. Both re-enter this workflow and run through the nested SQL runner (section 6). The catalogue today:\n\n**Reference data** - `x3_customer_search`, `x3_item_search`, `x3_customer_product`, `x3_item_detail`\n**Stock** - `x3_stock_available`, `x3_stock_detail`, `x3_stock_movements`, `x3_stock_movements_summary`\n**Sales orders** - `x3_sales_order_lines`\n**Revenue** - `x3_revenue_summary`, `x3_revenue_billed`, `x3_revenue_ordered`\n**Purchasing and manufacturing** - `x3_supplier_item_code`, `x3_component_impact_chain`\n**Finance** - `x3_payment_delay`\n**Sage X3 dictionary** - `x3_object_search`\n\n**Adding a query**: one entry in `catalog.json`, one file in `sql/` with `/*FILTERS*/` markers, `node build.mjs`, re-import this workflow. No new tool: the catalogue is discovered at run time.",
-        "height": 560,
-        "width": 1680,
+        "height": 600,
+        "width": 1980,
         "color": 5
       },
       "type": "n8n-nodes-base.stickyNote",
@@ -150,14 +150,14 @@
         0,
         1340
       ],
-      "id": "9f99948f-3671-488d-b20e-efd3210e2b38",
+      "id": "eb6960bc-3748-4ba1-8924-c8f2064e6a27",
       "name": "Note - 3 SQL queries through the catalogue"
     },
     {
       "parameters": {
         "content": "## 4. Explore and read Sage X3 objects\n\n`x3_object` reads the object layer through *X3 Object Runner* with one `action`: **describe** (blocks, fields, local menus, mandatory flags), **list** (records with an X3 filter, to get an exact identifier), **read** (one record in full). It cannot write.\n\nThe chain the agent follows, documented step by step by `x3_object_guide` (edit `guide/*.md`, then rebuild):\n1. the `x3_object_search` query, through `x3_query_run` - a notion, a function code such as GESSOH, a screen label or a table name gives the object code, its main table, primary key and management function;\n2. `x3_object` describe; 3. `x3_object` list; 4. `x3_object` read; 5. `x3_object_write`.\n\n`X3_Support` answers how-to questions about Sage X3 itself from a knowledge base (template only; bind a Header Auth credential or delete it).",
-        "height": 560,
-        "width": 1680,
+        "height": 620,
+        "width": 1980,
         "color": 6
       },
       "type": "n8n-nodes-base.stickyNote",
@@ -166,23 +166,23 @@
         0,
         1960
       ],
-      "id": "3cbd5f92-6577-4fcb-a894-6fefb9680e9c",
+      "id": "0fd02df0-c114-4be2-8f8f-d26e2bce7fc2",
       "name": "Note - 4 Sage X3 objects"
     },
     {
       "parameters": {
         "content": "## 5. Write into Sage X3 (irreversible)\n\n`x3_object_write` creates or modifies any object through *X3 Object Runner*, which refuses a write coming from `x3_object`. The system prompt requires a recap and an explicit confirmation on the chat path. **A direct MCP call has no such guard**: disconnect this node from the MCP trigger unless the MCP audience may write.",
-        "height": 400,
-        "width": 1680,
+        "height": 460,
+        "width": 1980,
         "color": 2
       },
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
         0,
-        2580
+        2640
       ],
-      "id": "ff300b0f-cd48-4258-aded-b1d69dd28549",
+      "id": "3680e53b-ebcb-410a-9775-34a8424fe55b",
       "name": "Note - 5 Write"
     },
     {
@@ -317,7 +317,7 @@
         60,
         1720
       ],
-      "id": "feb4e2da-9a87-47fb-bb4c-89813eb1cb08",
+      "id": "6f5867d9-d2cf-45e2-936d-b4ddc6d5acee",
       "name": "x3_query_catalog"
     },
     {
@@ -452,7 +452,7 @@
         380,
         1720
       ],
-      "id": "9bdfc0a9-9e37-400e-97c0-83afe0b5dcf0",
+      "id": "2d5db50b-d816-4bc8-87ec-2abfb9c732b9",
       "name": "x3_query_run"
     },
     {
@@ -589,7 +589,7 @@
         60,
         2300
       ],
-      "id": "ece69dd6-f276-4d18-9670-db3863b037ab",
+      "id": "991a7337-b2da-4b81-b443-3d6f24a805f8",
       "name": "x3_object"
     },
     {
@@ -607,7 +607,7 @@
         380,
         2300
       ],
-      "id": "2fdbcdb2-bd2d-4f95-849c-c0f7c4230d8f",
+      "id": "382623c7-e8e4-4769-8a25-cba80779ecae",
       "name": "x3_object_guide"
     },
     {
@@ -635,7 +635,7 @@
         700,
         2300
       ],
-      "id": "3a5473ba-7c68-4b9a-9ca2-c8fd1412cde4",
+      "id": "ac878406-1884-4d02-b03e-1b9d0946b54e",
       "name": "X3_Support"
     },
     {
@@ -770,25 +770,25 @@
       "typeVersion": 2.2,
       "position": [
         60,
-        2820
+        2880
       ],
-      "id": "660da814-f6c5-4ed6-996c-1e46c4619722",
+      "id": "5f274b27-f515-4ec3-b1f3-6ea99d84329f",
       "name": "x3_object_write"
     },
     {
       "parameters": {
         "content": "## 8. Where the tool calls come back in\n\nThe four *Call n8n Workflow* tools call **this very workflow**. n8n starts a sub-execution at this trigger with the tool's fields: `kind` (sql or object) picks the runner below, the other fields are what the model filled in. Nothing else should connect to this trigger.\n\nInputs: `kind`, `action`, `query`, `params`, `max_rows`, `object`, `transaction`, `identifier`, `data`, `allow_write`.",
-        "height": 300,
-        "width": 1680,
+        "height": 460,
+        "width": 1980,
         "color": 1
       },
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
         0,
-        3040
+        3160
       ],
-      "id": "5d7a51bd-8f7d-4cba-8eef-fa76ba9edf72",
+      "id": "fed77249-42a5-4f3d-af3e-61230432a9e7",
       "name": "Note - 8 Re-entry point"
     },
     {
@@ -840,12 +840,12 @@
         }
       },
       "type": "n8n-nodes-base.executeWorkflowTrigger",
-      "typeVersion": 1.2,
+      "typeVersion": 1.1,
       "position": [
         60,
-        3220
+        3400
       ],
-      "id": "17963b7a-3127-449e-a60e-2d74e2da4200",
+      "id": "2412d622-e689-4e99-bf8a-83716479f40d",
       "name": "When a tool calls this workflow"
     },
     {
@@ -858,25 +858,25 @@
       "typeVersion": 3.2,
       "position": [
         380,
-        3220
+        3400
       ],
-      "id": "02fca3f1-0004-4f4c-b505-8f43207f64c6",
+      "id": "36365435-6cac-45b0-8250-819ec90cc5d6",
       "name": "Route by kind"
     },
     {
       "parameters": {
         "content": "## 6. Nested SQL runner (`kind: sql`)\n\nEvery `x3_query_catalog` / `x3_query_run` call re-enters **this workflow** through the trigger of section 8 and lands here.\n\n1. **Resolve** looks the query up in the catalogue embedded in its code (16 queries, 133 filters, generated from `catalog.json` and `sql/*.sql` by `build.mjs`), normalises the params (JSON text or object, case-insensitive keys, stray quotes and % removed), refuses unknown filters, missing required ones and badly typed values **before** anything reaches Sage X3, composes the SQL by inserting each filter as an optional `[[ ... ]]` block at its `/*FILTERS*/` marker, and caps the row count (hard cap 2000).\n2. **Route** sends errors and catalogue answers straight to Shape, `run` to SQL Select, `analyse` to SQL Analyse.\n3. The two Sage X3 nodes receive the query and the parameter list **by expression** (`Parameters Mode: JSON`, node 0.6.0+) and continue on failure.\n4. **Shape** returns `{ ok, query, rowCount, truncated, max_rows, columns, rows, params_used, warnings }` or `{ ok: false, error, message }`.\n\n**Do not edit the catalogue here**: change the files and run `node build.mjs`, then re-import.",
-        "height": 600,
-        "width": 1680,
+        "height": 760,
+        "width": 1980,
         "color": 1
       },
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
         0,
-        3400
+        3680
       ],
-      "id": "6d0f4761-866d-43d0-b3e1-60a8c7eecdda",
+      "id": "65d696f7-7e3e-4b73-b4e5-3d2950f581a1",
       "name": "Note - 6 SQL runner"
     },
     {
@@ -887,10 +887,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        380,
-        3800
+        700,
+        4140
       ],
-      "id": "532ab021-3bf6-4d0e-818e-7dbe3833ac07",
+      "id": "c34bcaac-ae8f-4dd8-b8a7-a06ddf2f34cd",
       "name": "Resolve query and validate params"
     },
     {
@@ -902,10 +902,10 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
       "position": [
-        700,
-        3800
+        1020,
+        4140
       ],
-      "id": "9166baa8-dbb1-41f6-9197-deb2ad2b4aad",
+      "id": "19c27424-651e-4819-ab84-8fd847893ff2",
       "name": "Route the SQL action"
     },
     {
@@ -927,10 +927,10 @@
       "type": "n8n-nodes-nx3.nx3Soap",
       "typeVersion": 1,
       "position": [
-        1020,
-        3700
+        1340,
+        4040
       ],
-      "id": "c3bd08e3-f297-405f-8aa3-9f814ef24d25",
+      "id": "628c7b56-92b6-4648-b6e5-564fc053f3f6",
       "name": "Run SQL on Sage X3",
       "onError": "continueRegularOutput"
     },
@@ -951,10 +951,10 @@
       "type": "n8n-nodes-nx3.nx3Soap",
       "typeVersion": 1,
       "position": [
-        1020,
-        3900
+        1340,
+        4240
       ],
-      "id": "3c1ec78c-a012-42e4-a94c-5a5f6db729d7",
+      "id": "2303e226-826b-46c4-b97a-f2454b5ec2a4",
       "name": "Analyse SQL on Sage X3",
       "onError": "continueRegularOutput"
     },
@@ -966,26 +966,26 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1340,
-        3800
+        1660,
+        4140
       ],
-      "id": "4b8d5214-96a5-4b46-b2f3-54797688eefb",
+      "id": "bcb95be9-430d-4f83-96e4-3f1ee6efff7f",
       "name": "Shape the response"
     },
     {
       "parameters": {
         "content": "## 7. Nested object runner (`kind: object`)\n\nEvery `x3_object` / `x3_object_write` call lands here. **Validate** checks the action (describe, list, read, create, modify), the object code, the identifier and the payload before anything reaches Sage X3, and refuses create and modify unless `allow_write` is true: `x3_object` never writes, only `x3_object_write` does. **Route** sends each action to its own Sage X3 node; **Shape** returns `{ ok, action, object, identifier, data, messages }` or `{ ok: false, error, message }`.\n\nReplace `YOUR_X3_USER` on the Create node by the X3 user the records must be created under.",
-        "height": 780,
-        "width": 1680,
+        "height": 1140,
+        "width": 1980,
         "color": 1
       },
       "type": "n8n-nodes-base.stickyNote",
       "typeVersion": 1,
       "position": [
         0,
-        4060
+        4500
       ],
-      "id": "24b0710e-71e9-49fa-b0c4-f61ef0048027",
+      "id": "a0c6b715-a677-4810-a3f5-6e9e86231c82",
       "name": "Note - 7 Object runner"
     },
     {
@@ -996,10 +996,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        380,
-        4540
+        700,
+        5100
       ],
-      "id": "5fc16055-7558-4718-bd4d-c1f4e5696efe",
+      "id": "a7124e0c-0608-45ae-983f-c6f886b9f7d7",
       "name": "Validate the object call"
     },
     {
@@ -1011,10 +1011,10 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
       "position": [
-        700,
-        4540
+        1020,
+        5100
       ],
-      "id": "63d35f52-1187-4ad9-aff1-04a2a59b9c74",
+      "id": "ff9623a7-0a05-4dd7-a93b-1d4fcc25cedf",
       "name": "Route the object action"
     },
     {
@@ -1028,10 +1028,10 @@
       "type": "n8n-nodes-nx3.nx3Soap",
       "typeVersion": 1,
       "position": [
-        1020,
-        4220
+        1340,
+        4780
       ],
-      "id": "16863d31-ddcc-4376-8e16-b3827844a6e3",
+      "id": "611454fa-10f5-49d2-8246-c56b336845d1",
       "name": "Describe the object",
       "onError": "continueRegularOutput"
     },
@@ -1047,10 +1047,10 @@
       "type": "n8n-nodes-nx3.nx3Soap",
       "typeVersion": 1,
       "position": [
-        1020,
-        4380
+        1340,
+        4940
       ],
-      "id": "5ab17207-881c-410e-a9f8-11a050cfd627",
+      "id": "c413592d-59f7-409e-8f3f-9d83243df51f",
       "name": "List the records",
       "onError": "continueRegularOutput"
     },
@@ -1067,10 +1067,10 @@
       "type": "n8n-nodes-nx3.nx3Soap",
       "typeVersion": 1,
       "position": [
-        1020,
-        4540
+        1340,
+        5100
       ],
-      "id": "64947dd0-a510-426d-be61-c8103c7c5b8f",
+      "id": "575870da-b9b3-460d-87d1-fbb770763c80",
       "name": "Read the record",
       "onError": "continueRegularOutput"
     },
@@ -1089,10 +1089,10 @@
       "type": "n8n-nodes-nx3.nx3Soap",
       "typeVersion": 1,
       "position": [
-        1020,
-        4700
+        1340,
+        5260
       ],
-      "id": "2d49b5ce-6069-4c21-87be-25c189d59c4e",
+      "id": "865a4591-3ee4-4124-9479-36188d5f1b0f",
       "name": "Create the record",
       "onError": "continueRegularOutput"
     },
@@ -1109,10 +1109,10 @@
       "type": "n8n-nodes-nx3.nx3Soap",
       "typeVersion": 1,
       "position": [
-        1020,
-        4860
+        1340,
+        5420
       ],
-      "id": "44b6c8fc-174d-46d4-9273-673e56d73f52",
+      "id": "2b6d8fac-5801-48f6-b125-4a45aaf80cf7",
       "name": "Modify the record",
       "onError": "continueRegularOutput"
     },
@@ -1124,10 +1124,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1340,
-        4540
+        1660,
+        5100
       ],
-      "id": "0e72ec5e-f96e-43b1-9242-8d5aaa9183c0",
+      "id": "248a5a67-39c0-4add-b59a-d6a9be5b666a",
       "name": "Shape the object response"
     }
   ],

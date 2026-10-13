@@ -62,14 +62,14 @@ Every \`x3_query_catalog\` / \`x3_query_run\` call re-enters **this workflow** t
 3. The two Sage X3 nodes receive the query and the parameter list **by expression** (\`Parameters Mode: JSON\`, node 0.6.0+) and continue on failure.
 4. **Shape** returns \`{ ok, query, rowCount, truncated, max_rows, columns, rows, params_used, warnings }\` or \`{ ok: false, error, message }\`.
 
-**Do not edit the catalogue here**: change the files and run \`node build.mjs\`, then re-import.`, [0, y], 1680, 600, COLORS.yellow));
+**Do not edit the catalogue here**: change the files and run \`node build.mjs\`, then re-import.`, [0, y], 1980, 760, COLORS.yellow));
 
   const r = (name) => name;
-  nodes.push(node(r('Resolve query and validate params'), 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('resolve.js', catalog) }, [380, y + 400]));
+  nodes.push(node(r('Resolve query and validate params'), 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('resolve.js', catalog) }, [700, y + 460]));
   nodes.push(node(r('Route the SQL action'), 'n8n-nodes-base.switch', 3.2, {
     mode: 'expression', numberOutputs: 3,
     output: "={{ $json.ok !== true ? 2 : ($json.mode === 'analyse' ? 1 : 0) }}",
-  }, [700, y + 400]));
+  }, [1020, y + 460]));
   const sqlCommon = {
     sqlQuery: '={{ $json.sqlQuery }}',
     sqlParametersMode: 'json',
@@ -77,9 +77,9 @@ Every \`x3_query_catalog\` / \`x3_query_run\` call re-enters **this workflow** t
     sqlOptions: { maxLines: '={{ $json.maxLines }}', maxTime: '={{ $json.maxTime }}' },
     advanced: { requestTimeout: '={{ $json.requestTimeout }}' },
   };
-  nodes.push(node(r('Run SQL on Sage X3'), NX3, 1, { operation: 'sqlSelect', ...sqlCommon, simplify: true, rowFormat: 'arrays' }, [1020, y + 300], { onError: 'continueRegularOutput', credentials: CRED('nx3SoapApi') }));
-  nodes.push(node(r('Analyse SQL on Sage X3'), NX3, 1, { operation: 'sqlAnalyse', ...sqlCommon }, [1020, y + 500], { onError: 'continueRegularOutput', credentials: CRED('nx3SoapApi') }));
-  nodes.push(node(r('Shape the response'), 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('shape.js', catalog) }, [1340, y + 400]));
+  nodes.push(node(r('Run SQL on Sage X3'), NX3, 1, { operation: 'sqlSelect', ...sqlCommon, simplify: true, rowFormat: 'arrays' }, [1340, y + 360], { onError: 'continueRegularOutput', credentials: CRED('nx3SoapApi') }));
+  nodes.push(node(r('Analyse SQL on Sage X3'), NX3, 1, { operation: 'sqlAnalyse', ...sqlCommon }, [1340, y + 560], { onError: 'continueRegularOutput', credentials: CRED('nx3SoapApi') }));
+  nodes.push(node(r('Shape the response'), 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('shape.js', catalog) }, [1660, y + 460]));
 
   connect(connections, from, 'Resolve query and validate params', 'main', fromIndex);
   connect(connections, 'Resolve query and validate params', 'Route the SQL action');
@@ -88,7 +88,7 @@ Every \`x3_query_catalog\` / \`x3_query_run\` call re-enters **this workflow** t
   connect(connections, 'Route the SQL action', 'Shape the response', 'main', 2);
   connect(connections, 'Run SQL on Sage X3', 'Shape the response');
   connect(connections, 'Analyse SQL on Sage X3', 'Shape the response');
-  return y + 660;
+  return y + 820;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -101,20 +101,20 @@ function addObjectRunner(nodes, connections, y, from, fromIndex) {
 
 Every \`x3_object\` / \`x3_object_write\` call lands here. **Validate** checks the action (describe, list, read, create, modify), the object code, the identifier and the payload before anything reaches Sage X3, and refuses create and modify unless \`allow_write\` is true: \`x3_object\` never writes, only \`x3_object_write\` does. **Route** sends each action to its own Sage X3 node; **Shape** returns \`{ ok, action, object, identifier, data, messages }\` or \`{ ok: false, error, message }\`.
 
-Replace \`${cfg.x3User}\` on the Create node by the X3 user the records must be created under.`, [0, y], 1680, 780, COLORS.yellow));
+Replace \`${cfg.x3User}\` on the Create node by the X3 user the records must be created under.`, [0, y], 1980, 1140, COLORS.yellow));
 
-  nodes.push(node('Validate the object call', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('object-validate.js', catalog) }, [380, y + 480]));
+  nodes.push(node('Validate the object call', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('object-validate.js', catalog) }, [700, y + 600]));
   nodes.push(node('Route the object action', 'n8n-nodes-base.switch', 3.2, {
     mode: 'expression', numberOutputs: 6,
     output: "={{ $json.ok !== true ? 5 : ['describe', 'list', 'read', 'create', 'modify'].indexOf($json.action) }}",
-  }, [700, y + 480]));
-  const x3 = (name, params, dy) => node(name, NX3, 1, params, [1020, y + dy], { onError: 'continueRegularOutput', credentials: CRED('nx3SoapApi') });
-  nodes.push(x3('Describe the object', { operation: 'describe', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', x3Context: {}, advanced: {} }, 160));
-  nodes.push(x3('List the records', { operation: 'list', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', data: '={{ $json.data }}', x3Context: {}, advanced: {} }, 320));
-  nodes.push(x3('Read the record', { operation: 'read', actionCode: 'READ', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', ident: '={{ $json.identifier }}', x3Context: {}, advanced: {} }, 480));
-  nodes.push(x3('Create the record', { operation: 'create', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', ident: '={{ $json.identifier }}', data: '={{ $json.data }}', x3Context: { user: cfg.x3User }, advanced: {} }, 640));
-  nodes.push(x3('Modify the record', { operation: 'modify', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', ident: '={{ $json.identifier }}', data: '={{ $json.data }}', x3Context: {}, advanced: {} }, 800));
-  nodes.push(node('Shape the object response', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('object-shape.js', catalog) }, [1340, y + 480]));
+  }, [1020, y + 600]));
+  const x3 = (name, params, dy) => node(name, NX3, 1, params, [1340, y + dy], { onError: 'continueRegularOutput', credentials: CRED('nx3SoapApi') });
+  nodes.push(x3('Describe the object', { operation: 'describe', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', x3Context: {}, advanced: {} }, 280));
+  nodes.push(x3('List the records', { operation: 'list', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', data: '={{ $json.data }}', x3Context: {}, advanced: {} }, 440));
+  nodes.push(x3('Read the record', { operation: 'read', actionCode: 'READ', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', ident: '={{ $json.identifier }}', x3Context: {}, advanced: {} }, 600));
+  nodes.push(x3('Create the record', { operation: 'create', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', ident: '={{ $json.identifier }}', data: '={{ $json.data }}', x3Context: { user: cfg.x3User }, advanced: {} }, 760));
+  nodes.push(x3('Modify the record', { operation: 'modify', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', ident: '={{ $json.identifier }}', data: '={{ $json.data }}', x3Context: {}, advanced: {} }, 920));
+  nodes.push(node('Shape the object response', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('object-shape.js', catalog) }, [1660, y + 600]));
 
   connect(connections, from, 'Validate the object call', 'main', fromIndex);
   connect(connections, 'Validate the object call', 'Route the object action');
@@ -123,7 +123,7 @@ Replace \`${cfg.x3User}\` on the Create node by the X3 user the records must be 
     connect(connections, n, 'Shape the object response');
   });
   connect(connections, 'Route the object action', 'Shape the object response', 'main', 5);
-  return y + 840;
+  return y + 1200;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -254,7 +254,7 @@ The five tools are published on this endpoint, protected by Bearer Auth. Point C
 
 ${catalogSummary()}
 
-**Adding a query**: one entry in \`catalog.json\`, one file in \`sql/\` with \`/*FILTERS*/\` markers, \`node build.mjs\`, re-import this workflow. No new tool: the catalogue is discovered at run time.`, [0, 1340], 1680, 560, COLORS.blue));
+**Adding a query**: one entry in \`catalog.json\`, one file in \`sql/\` with \`/*FILTERS*/\` markers, \`node build.mjs\`, re-import this workflow. No new tool: the catalogue is discovered at run time.`, [0, 1340], 1980, 600, COLORS.blue));
   tools.push(toolWorkflow('x3_query_catalog', `Purpose: list the Sage X3 SQL queries available on this server, with their group, purpose, returned columns, filters (name, type, required) and row cap. Call it when you are not certain which query answers the question or which filters it takes.
 
 Parameters:
@@ -293,7 +293,7 @@ The chain the agent follows, documented step by step by \`x3_object_guide\` (edi
 1. the \`x3_object_search\` query, through \`x3_query_run\` - a notion, a function code such as GESSOH, a screen label or a table name gives the object code, its main table, primary key and management function;
 2. \`x3_object\` describe; 3. \`x3_object\` list; 4. \`x3_object\` read; 5. \`x3_object_write\`.
 
-\`X3_Support\` answers how-to questions about Sage X3 itself from a knowledge base (template only; bind a Header Auth credential or delete it).`, [0, y], 1680, 560, COLORS.purple));
+\`X3_Support\` answers how-to questions about Sage X3 itself from a knowledge base (template only; bind a Header Auth credential or delete it).`, [0, y], 1980, 620, COLORS.purple));
   tools.push(toolWorkflow('x3_object', `Purpose: read the Sage X3 object layer. One tool, three actions: describe (the screen blocks, fields, local menus and mandatory flags of an object), list (the records of an object with an X3 filter, to obtain exact identifiers), read (one record in full from its identifier). It never writes.
 
 Parameters:
@@ -344,12 +344,12 @@ Rules: it has no access to the live folder; for data, use the x3_ tools.`,
       options: {},
     }, [700, y + 340]));
   }
-  y += 620;
+  y += 680;
 
   // --- 5. Write --------------------------------------------------------------------------------
   nodes.push(sticky('Note - 5 Write', `## 5. Write into Sage X3 (irreversible)
 
-\`x3_object_write\` creates or modifies any object through *${OBJECT_RUNNER_NAME}*, which refuses a write coming from \`x3_object\`. The system prompt requires a recap and an explicit confirmation on the chat path. **A direct MCP call has no such guard**: disconnect this node from the MCP trigger unless the MCP audience may write.`, [0, y], 1680, 400, COLORS.orange));
+\`x3_object_write\` creates or modifies any object through *${OBJECT_RUNNER_NAME}*, which refuses a write coming from \`x3_object\`. The system prompt requires a recap and an explicit confirmation on the chat path. **A direct MCP call has no such guard**: disconnect this node from the MCP trigger unless the MCP audience may write.`, [0, y], 1980, 460, COLORS.orange));
   tools.push(toolWorkflow('x3_object_write', `Purpose: create or modify a Sage X3 record through the object layer. IRREVERSIBLE WRITE: only after the user explicitly confirmed a recap of the object, identifier, fields and values; only with block and field names taken from x3_object describe or read; only after checking the referenced codes exist (customer, item, site, supplier) with the reference queries.
 
 Parameters:
@@ -376,19 +376,19 @@ Answer: { ok, action, object, identifier, data, messages }; the identifier assig
   }
 
   // --- 8. The single re-entry point of the nested runners --------------------------------------
-  y += 460;
+  y += 520;
   nodes.push(sticky('Note - 8 Re-entry point', `## 8. Where the tool calls come back in
 
 The four *Call n8n Workflow* tools call **this very workflow**. n8n starts a sub-execution at this trigger with the tool's fields: \`kind\` (sql or object) picks the runner below, the other fields are what the model filled in. Nothing else should connect to this trigger.
 
-Inputs: ${RUNNER_INPUTS.map(([n]) => '\`' + n + '\`').join(', ')}.`, [0, y], 1680, 300, COLORS.yellow));
-  nodes.push(node('When a tool calls this workflow', 'n8n-nodes-base.executeWorkflowTrigger', 1.2, {
+Inputs: ${RUNNER_INPUTS.map(([n]) => '\`' + n + '\`').join(', ')}.`, [0, y], 1980, 460, COLORS.yellow));
+  nodes.push(node('When a tool calls this workflow', 'n8n-nodes-base.executeWorkflowTrigger', 1.1, {
     inputSource: 'workflowInputs',
     workflowInputs: { values: RUNNER_INPUTS.map(([name, type]) => ({ name, type })) },
-  }, [60, y + 180]));
-  nodes.push(node('Route by kind', 'n8n-nodes-base.switch', 3.2, { mode: 'expression', numberOutputs: 2, output: "={{ $json.kind === 'object' ? 1 : 0 }}" }, [380, y + 180]));
+  }, [60, y + 240]));
+  nodes.push(node('Route by kind', 'n8n-nodes-base.switch', 3.2, { mode: 'expression', numberOutputs: 2, output: "={{ $json.kind === 'object' ? 1 : 0 }}" }, [380, y + 240]));
   connect(connections, 'When a tool calls this workflow', 'Route by kind');
-  y += 360;
+  y += 520;
   y = addSqlRunner(nodes, connections, y, 'Route by kind', 0);
   addObjectRunner(nodes, connections, y, 'Route by kind', 1);
 
