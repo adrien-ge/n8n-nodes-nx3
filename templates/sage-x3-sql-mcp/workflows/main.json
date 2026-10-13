@@ -14,12 +14,12 @@
         0,
         0
       ],
-      "id": "5f565033-115b-4cb7-8df3-854a33999a36",
+      "id": "4f40644e-81ed-48f8-9511-ee9934caa5b5",
       "name": "Note - Overview"
     },
     {
       "parameters": {
-        "content": "## Set this up before use\n\n### 1. Community node\n**n8n-nodes-nx3 0.6.0 or later** (Settings > Community nodes). The SQL runner uses its *Parameters Mode: JSON*.\n\n### 2. Point the tools at this workflow\nEverything is nested in this single workflow: the four *Call n8n Workflow* tools call it back and re-enter through the trigger of section 8. After importing, open each of the four tools and select **this workflow** in the **Workflow** field (or run build.mjs --dev with the workflow id in a dev config).\n\n### 3. Credentials\n- **Nx3 SOAP API** on the seven Sage X3 nodes of sections 6 and 7.\n- **Bearer Auth** on the MCP Server Trigger (`openssl rand -hex 32`).\n- **OpenRouter** (or any chat model) on the model node.\n- **Header Auth** on `X3_Support` if you keep that knowledge-base tool.\n\n### 4. Placeholders\n| Where | Value | Replace with |\n|---|---|---|\n| Section 7, *Create the record* | `YOUR_X3_USER` | the X3 user the records are created under |\n| MCP Server Trigger | path `sage-x3-mcp` | any path |\n| `catalog.json` settings | `lang: ENG` | your label language if the folder has no English texts |\n\n### 5. Test\nActivate, open the chat and ask *\"list my customers in category FR\"*, then *\"billed revenue by month for 2025\"*, then *\"which X3 object holds purchase orders and what are its fields?\"*.",
+        "content": "## Set this up before use\n\n### 1. Community node\n**n8n-nodes-nx3 0.6.0 or later** (Settings > Community nodes). The SQL runner uses its *Parameters Mode: JSON*.\n\n### 2. Point the tools at this workflow\nEverything is nested in this single workflow: the four *Call n8n Workflow* tools call it back and re-enter through the trigger of section 8. After importing, open each of the four tools and select **this workflow** in the **Workflow** field (or run build.mjs --dev with the workflow id in a dev config).\n\n### 3. Credentials\n- **Nx3 SOAP API** on the seven Sage X3 nodes of sections 6 and 7.\n- **Bearer Auth** on the MCP Server Trigger (`openssl rand -hex 32`) and the same credential on *Use the MCP server of this workflow*, whose **Endpoint** must be this workflow's production MCP URL followed by `/sse` (`https://<your n8n>/mcp/sage-x3-mcp/sse`, SSE transport).\n- **OpenRouter** (or any chat model) on the model node.\n- **Header Auth** on `X3_Support` if you keep that knowledge-base tool.\n\n### 4. Placeholders\n| Where | Value | Replace with |\n|---|---|---|\n| Section 7, *Create the record* | `YOUR_X3_USER` | the X3 user the records are created under |\n| MCP Server Trigger | path `sage-x3-mcp` | any path |\n| `catalog.json` settings | `lang: ENG` | your label language if the folder has no English texts |\n\n### 5. Test\nActivate, open the chat and ask *\"list my customers in category FR\"*, then *\"billed revenue by month for 2025\"*, then *\"which X3 object holds purchase orders and what are its fields?\"*.",
         "height": 760,
         "width": 820,
         "color": 3
@@ -30,12 +30,12 @@
         860,
         0
       ],
-      "id": "e0ba8e35-1d5d-4476-a6c4-4c33e5c5f370",
+      "id": "be9f3cd9-d315-4e5d-ad75-4d5a36a5f65a",
       "name": "Note - Setup required"
     },
     {
       "parameters": {
-        "content": "## 1. Conversation\n\nThe n8n chat receives the question, the agent chooses among the five tools, the memory keeps the thread for follow-ups (\"and for 2026?\"). The system prompt carries the catalogue summary (generated) and the routing rules.",
+        "content": "## 1. Conversation\n\nThe n8n chat receives the question, the memory keeps the thread for follow-ups (\"and for 2026?\"). The agent has **one** tool, an *MCP Client Tool* pointed at the MCP server of this very workflow (section 2): it discovers the five tools there, exactly as an external client would, so the chat and the MCP clients always see the same thing. The system prompt carries the catalogue summary (generated) and the routing rules.\n\nSet the client's **Endpoint** to this workflow's production MCP URL followed by `/sse` (SSE transport) and give it the same Bearer token as the trigger. The workflow must be active for the chat to work, since the agent goes through the live endpoint.",
         "height": 460,
         "width": 820,
         "color": 4
@@ -46,7 +46,7 @@
         0,
         820
       ],
-      "id": "6a914daa-b010-4341-ba6a-161659504d2b",
+      "id": "fc16f79d-cff9-4019-adb4-ceb607773917",
       "name": "Note - 1 Conversation"
     },
     {
@@ -59,9 +59,9 @@
         60,
         1000
       ],
-      "id": "f292c3b9-7917-4550-baad-07a66d21b0fc",
+      "id": "76f317d2-a03b-4a91-bdaf-c5311612d81c",
       "name": "When a user asks in the chat",
-      "webhookId": "b9009db2-879d-4896-8471-62cd076fc452"
+      "webhookId": "8c144adb-6402-4d93-acfc-d18989133a0f"
     },
     {
       "parameters": {
@@ -76,7 +76,7 @@
         340,
         1000
       ],
-      "id": "ab064d32-c7cd-4a3e-9a0b-0f7584f9282c",
+      "id": "9ab77108-7965-4bd8-be1b-56f6cc9d4b93",
       "name": "Route the question to the right tool"
     },
     {
@@ -92,7 +92,7 @@
         280,
         1180
       ],
-      "id": "17d6cac3-5700-485f-8010-63d8662b8a64",
+      "id": "5899e1de-0ea9-4cee-80f1-817a05101a02",
       "name": "Language model (OpenRouter)"
     },
     {
@@ -103,12 +103,31 @@
         500,
         1180
       ],
-      "id": "d7520e99-07d9-4ab2-8c8d-edeaabdff65a",
+      "id": "4d38eda9-3a78-4552-901e-f422ba716411",
       "name": "Conversation memory"
     },
     {
       "parameters": {
-        "content": "## 2. MCP server\n\nThe five tools are published on this endpoint, protected by Bearer Auth. Point Claude Desktop, Claude Code or Cursor at the production URL with the token. A client that only knows `x3_query_catalog` and `x3_query_run` can use every query of the catalogue.\n\n**Careful**: `x3_object_write` is reachable here with no confirmation step. Disconnect it from this trigger if the MCP audience should be read-only.",
+        "endpointUrl": "https://YOUR-N8N-HOST/mcp/sage-x3-mcp/sse",
+        "serverTransport": "sse",
+        "authentication": "bearerAuth",
+        "include": "all",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.2,
+      "position": [
+        720,
+        1180
+      ],
+      "id": "3971c5d7-84ab-4da5-ad53-1be371eb1904",
+      "name": "Use the MCP server of this workflow"
+    },
+    {
+      "parameters": {
+        "content": "## 2. MCP server\n\nThe five tools are published on this endpoint, protected by Bearer Auth, and nowhere else: the agent of section 1 is itself an MCP client of this endpoint. Point Claude Desktop, Claude Code or Cursor at the production URL with the token. A client that only knows `x3_query_catalog` and `x3_query_run` can use every query of the catalogue.\n\n**Careful**: `x3_object_write` is reachable here with no confirmation step. Disconnect it from this trigger if the MCP audience should be read-only.",
         "height": 460,
         "width": 820,
         "color": 4
@@ -119,7 +138,7 @@
         860,
         820
       ],
-      "id": "0d4f9113-f7f3-4397-9377-dcc96dfc0186",
+      "id": "95947815-bf4a-4373-bd90-7c2119fca17f",
       "name": "Note - 2 MCP server"
     },
     {
@@ -133,9 +152,9 @@
         1140,
         1020
       ],
-      "id": "baaf525a-0a81-4bda-b5b5-30818dc218f7",
+      "id": "a050f69d-77fd-4379-bf23-654836e4ed5b",
       "name": "Expose the tools as an MCP server",
-      "webhookId": "5a376ab4-d3c3-40b4-8e73-6509f5aaff1f"
+      "webhookId": "a47d8ca4-06e1-499b-ad81-b88128cd32f4"
     },
     {
       "parameters": {
@@ -150,7 +169,7 @@
         0,
         1340
       ],
-      "id": "eb6960bc-3748-4ba1-8924-c8f2064e6a27",
+      "id": "f61c9952-dbb5-4585-9321-3619dbd05dcf",
       "name": "Note - 3 SQL queries through the catalogue"
     },
     {
@@ -166,7 +185,7 @@
         0,
         1960
       ],
-      "id": "0fd02df0-c114-4be2-8f8f-d26e2bce7fc2",
+      "id": "453e196e-d715-4ae0-a32e-0bb1c5b221d4",
       "name": "Note - 4 Sage X3 objects"
     },
     {
@@ -182,7 +201,7 @@
         0,
         2640
       ],
-      "id": "3680e53b-ebcb-410a-9775-34a8424fe55b",
+      "id": "e408d86b-eb22-4e1f-adf9-e73435c65ab3",
       "name": "Note - 5 Write"
     },
     {
@@ -317,7 +336,7 @@
         60,
         1720
       ],
-      "id": "6f5867d9-d2cf-45e2-936d-b4ddc6d5acee",
+      "id": "c4e04014-78a8-4b77-9be1-e6c6bfa42fef",
       "name": "x3_query_catalog"
     },
     {
@@ -452,7 +471,7 @@
         380,
         1720
       ],
-      "id": "2d5db50b-d816-4bc8-87ec-2abfb9c732b9",
+      "id": "d981504b-c669-4381-aa70-cbcced8ed57d",
       "name": "x3_query_run"
     },
     {
@@ -589,7 +608,7 @@
         60,
         2300
       ],
-      "id": "991a7337-b2da-4b81-b443-3d6f24a805f8",
+      "id": "016decdc-72d2-4df4-891c-f089044b5341",
       "name": "x3_object"
     },
     {
@@ -607,7 +626,7 @@
         380,
         2300
       ],
-      "id": "382623c7-e8e4-4769-8a25-cba80779ecae",
+      "id": "7ed53e10-5eae-4c90-bfcc-441d210df937",
       "name": "x3_object_guide"
     },
     {
@@ -635,7 +654,7 @@
         700,
         2300
       ],
-      "id": "ac878406-1884-4d02-b03e-1b9d0946b54e",
+      "id": "af9ade3d-4e50-4127-b836-7d75e6b606cc",
       "name": "X3_Support"
     },
     {
@@ -772,7 +791,7 @@
         60,
         2880
       ],
-      "id": "5f274b27-f515-4ec3-b1f3-6ea99d84329f",
+      "id": "0b55e81b-5e73-4e60-b8ac-c4bf051d2729",
       "name": "x3_object_write"
     },
     {
@@ -788,7 +807,7 @@
         0,
         3160
       ],
-      "id": "fed77249-42a5-4f3d-af3e-61230432a9e7",
+      "id": "ef2069f2-5c9d-4118-92c8-b5d284a20caa",
       "name": "Note - 8 Re-entry point"
     },
     {
@@ -845,7 +864,7 @@
         60,
         3400
       ],
-      "id": "2412d622-e689-4e99-bf8a-83716479f40d",
+      "id": "d0114cbd-5c99-4e2c-be74-c78aabedf67e",
       "name": "When a tool calls this workflow"
     },
     {
@@ -860,7 +879,7 @@
         380,
         3400
       ],
-      "id": "36365435-6cac-45b0-8250-819ec90cc5d6",
+      "id": "8d179bb7-eed4-46fe-83c1-41d835899daa",
       "name": "Route by kind"
     },
     {
@@ -876,7 +895,7 @@
         0,
         3680
       ],
-      "id": "65d696f7-7e3e-4b73-b4e5-3d2950f581a1",
+      "id": "a5e54d8f-b83a-494e-92cd-dd8f47e54ba6",
       "name": "Note - 6 SQL runner"
     },
     {
@@ -890,7 +909,7 @@
         700,
         4140
       ],
-      "id": "c34bcaac-ae8f-4dd8-b8a7-a06ddf2f34cd",
+      "id": "53a4a704-e5e8-4f2f-95ac-90791fa5cd4c",
       "name": "Resolve query and validate params"
     },
     {
@@ -905,7 +924,7 @@
         1020,
         4140
       ],
-      "id": "19c27424-651e-4819-ab84-8fd847893ff2",
+      "id": "3b11d092-4739-4925-b597-3c5de60cb54a",
       "name": "Route the SQL action"
     },
     {
@@ -930,7 +949,7 @@
         1340,
         4040
       ],
-      "id": "628c7b56-92b6-4648-b6e5-564fc053f3f6",
+      "id": "5ab5fdea-b07a-4c05-a20c-47df0da18d6b",
       "name": "Run SQL on Sage X3",
       "onError": "continueRegularOutput"
     },
@@ -954,7 +973,7 @@
         1340,
         4240
       ],
-      "id": "2303e226-826b-46c4-b97a-f2454b5ec2a4",
+      "id": "41673d25-e09c-4fe3-919e-c4c978405c24",
       "name": "Analyse SQL on Sage X3",
       "onError": "continueRegularOutput"
     },
@@ -969,7 +988,7 @@
         1660,
         4140
       ],
-      "id": "bcb95be9-430d-4f83-96e4-3f1ee6efff7f",
+      "id": "a3d4ed96-c827-4a56-9c66-f50eccf54452",
       "name": "Shape the response"
     },
     {
@@ -985,7 +1004,7 @@
         0,
         4500
       ],
-      "id": "a0c6b715-a677-4810-a3f5-6e9e86231c82",
+      "id": "5972236f-6d1c-41d9-8de4-3e2ae0e0fc14",
       "name": "Note - 7 Object runner"
     },
     {
@@ -999,7 +1018,7 @@
         700,
         5100
       ],
-      "id": "a7124e0c-0608-45ae-983f-c6f886b9f7d7",
+      "id": "093313e3-05d8-4db8-8b59-a32fd4d797b1",
       "name": "Validate the object call"
     },
     {
@@ -1014,7 +1033,7 @@
         1020,
         5100
       ],
-      "id": "ff9623a7-0a05-4dd7-a93b-1d4fcc25cedf",
+      "id": "4d4bdd60-d2ad-41ed-9e5c-e274e8347fc8",
       "name": "Route the object action"
     },
     {
@@ -1031,7 +1050,7 @@
         1340,
         4780
       ],
-      "id": "611454fa-10f5-49d2-8246-c56b336845d1",
+      "id": "37079769-0c71-408c-9666-62691d2caf4c",
       "name": "Describe the object",
       "onError": "continueRegularOutput"
     },
@@ -1050,7 +1069,7 @@
         1340,
         4940
       ],
-      "id": "c413592d-59f7-409e-8f3f-9d83243df51f",
+      "id": "39d916c0-dd0d-4e5f-92c9-4a3fad69cd0f",
       "name": "List the records",
       "onError": "continueRegularOutput"
     },
@@ -1070,7 +1089,7 @@
         1340,
         5100
       ],
-      "id": "575870da-b9b3-460d-87d1-fbb770763c80",
+      "id": "5a19beae-4f3c-440c-874e-d6d2a3e93dbd",
       "name": "Read the record",
       "onError": "continueRegularOutput"
     },
@@ -1092,7 +1111,7 @@
         1340,
         5260
       ],
-      "id": "865a4591-3ee4-4124-9479-36188d5f1b0f",
+      "id": "560640e9-c009-4311-9ef2-f6d370616c6c",
       "name": "Create the record",
       "onError": "continueRegularOutput"
     },
@@ -1112,7 +1131,7 @@
         1340,
         5420
       ],
-      "id": "2b6d8fac-5801-48f6-b125-4a45aaf80cf7",
+      "id": "76a90b8e-0c80-4235-8ebc-feed5348fb2d",
       "name": "Modify the record",
       "onError": "continueRegularOutput"
     },
@@ -1127,11 +1146,22 @@
         1660,
         5100
       ],
-      "id": "248a5a67-39c0-4add-b59a-d6a9be5b666a",
+      "id": "24bf256f-4aa4-45e8-aeaa-d3b6f4a694bc",
       "name": "Shape the object response"
     }
   ],
   "connections": {
+    "Use the MCP server of this workflow": {
+      "ai_tool": [
+        [
+          {
+            "node": "Route the question to the right tool",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "When a user asks in the chat": {
       "main": [
         [
@@ -1169,11 +1199,6 @@
       "ai_tool": [
         [
           {
-            "node": "Route the question to the right tool",
-            "type": "ai_tool",
-            "index": 0
-          },
-          {
             "node": "Expose the tools as an MCP server",
             "type": "ai_tool",
             "index": 0
@@ -1184,11 +1209,6 @@
     "x3_query_run": {
       "ai_tool": [
         [
-          {
-            "node": "Route the question to the right tool",
-            "type": "ai_tool",
-            "index": 0
-          },
           {
             "node": "Expose the tools as an MCP server",
             "type": "ai_tool",
@@ -1201,11 +1221,6 @@
       "ai_tool": [
         [
           {
-            "node": "Route the question to the right tool",
-            "type": "ai_tool",
-            "index": 0
-          },
-          {
             "node": "Expose the tools as an MCP server",
             "type": "ai_tool",
             "index": 0
@@ -1216,11 +1231,6 @@
     "x3_object_guide": {
       "ai_tool": [
         [
-          {
-            "node": "Route the question to the right tool",
-            "type": "ai_tool",
-            "index": 0
-          },
           {
             "node": "Expose the tools as an MCP server",
             "type": "ai_tool",
@@ -1233,11 +1243,6 @@
       "ai_tool": [
         [
           {
-            "node": "Route the question to the right tool",
-            "type": "ai_tool",
-            "index": 0
-          },
-          {
             "node": "Expose the tools as an MCP server",
             "type": "ai_tool",
             "index": 0
@@ -1248,11 +1253,6 @@
     "x3_object_write": {
       "ai_tool": [
         [
-          {
-            "node": "Route the question to the right tool",
-            "type": "ai_tool",
-            "index": 0
-          },
           {
             "node": "Expose the tools as an MCP server",
             "type": "ai_tool",

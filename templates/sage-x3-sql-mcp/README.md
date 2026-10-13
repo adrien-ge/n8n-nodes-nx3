@@ -19,8 +19,8 @@ through `x3_query_catalog`.
 
 | Section | Role |
 | --- | --- |
-| 1-2 | Chat trigger + AI Agent + memory + model, and the MCP Server Trigger |
-| 3-5 | The five tools. The four *Call n8n Workflow* tools call **this same workflow** back |
+| 1-2 | Chat trigger + AI Agent + memory + model, and the MCP Server Trigger. The agent has a single tool, an **MCP Client Tool** pointed at this workflow's own MCP endpoint, so the chat sees exactly what external MCP clients see |
+| 3-5 | The five tools, published on the MCP Server Trigger only. The four *Call n8n Workflow* tools call **this same workflow** back |
 | 6 | Nested **SQL runner**: looks the query up in the embedded catalogue, validates the filters, composes the SQL, calls Sage X3 with the parameters passed **by expression** (node 0.6.0, Parameters Mode: JSON), returns one stable object |
 | 7 | Nested **object runner**: describe, list, read, create, modify, with validation of the action, object code, identifier and payload, and a guard that refuses writes coming from the read tool |
 | 8 | The single *Execute Workflow Trigger* the tool calls re-enter through; `kind` (sql or object) picks the runner |
@@ -54,8 +54,11 @@ workflows/           generated workflows (template); workflows/dev/ when built w
    `x3_object`, `x3_object_write`) and select **this workflow** in the **Workflow** field: the
    tools re-enter the workflow through the trigger of section 8. Select the **Nx3 SOAP API**
    credential on the seven Sage X3 nodes of sections 6 and 7, a chat model credential on the
-   model node, a **Bearer Auth** credential on the MCP Server Trigger. Replace `YOUR_X3_USER` on
-   *Create the record*.
+   model node, a **Bearer Auth** credential on the MCP Server Trigger **and** on *Use the MCP
+   server of this workflow*, whose **Endpoint** must be the production MCP URL of this workflow
+   followed by `/sse` (`https://<your n8n>/mcp/sage-x3-mcp/sse`, SSE transport). Replace
+   `YOUR_X3_USER` on *Create the record*.
+   The workflow must be active for the chat to work: the agent goes through the live endpoint.
 3. Activate the main workflow. In the chat, ask *list my customers in category FR*, then
    *billed revenue by month for 2025*, then *which X3 object holds purchase orders and what are its
    fields?*.
@@ -101,7 +104,8 @@ prefix (`CUSTOM` when the package is loaded from the custom folder) and the DEV 
 { "nodePrefix": "CUSTOM", "namePrefix": "[DEV] ",
   "ids": { "main": "DEVx3main00000001", "tests": "DEVx3tests0000001" },
   "credentials": { "nx3SoapApi": { "id": "...", "name": "..." }, "openRouterApi": { "id": "...", "name": "..." }, "httpBearerAuth": { "id": "...", "name": "..." } },
-  "mcpPath": "sage-x3-mcp-dev", "mcpWebhookId": "dev-x3-mcp-0000000000001", "chatWebhookId": "dev-x3-chat-000000000001",
+  "mcpPath": "sage-x3-mcp-dev", "mcpWebhookId": "dev-x3-mcp-0000000000001", "mcpSelfUrl": "http://localhost:5678/mcp/sage-x3-mcp-dev/sse",
+  "chatWebhookId": "dev-x3-chat-000000000001",
   "testsWebhookPath": "dev-x3-runner-tests", "x3User": "AGERA" }
 ```
 

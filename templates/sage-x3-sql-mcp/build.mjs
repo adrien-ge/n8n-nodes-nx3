@@ -211,7 +211,7 @@ Everything is nested in this single workflow: the four *Call n8n Workflow* tools
 
 ### 3. Credentials
 - **Nx3 SOAP API** on the seven Sage X3 nodes of sections 6 and 7.
-- **Bearer Auth** on the MCP Server Trigger (\`openssl rand -hex 32\`).
+- **Bearer Auth** on the MCP Server Trigger (\`openssl rand -hex 32\`) and the same credential on *Use the MCP server of this workflow*, whose **Endpoint** must be this workflow's production MCP URL followed by \`/sse\` (\`https://<your n8n>/mcp/${S.mcp_path}/sse\`, SSE transport).
 - **OpenRouter** (or any chat model) on the model node.
 - **Header Auth** on \`X3_Support\` if you keep that knowledge-base tool.
 
@@ -228,13 +228,25 @@ Activate, open the chat and ask *"list my customers in category FR"*, then *"bil
   // --- 1. Conversation -------------------------------------------------------------------------
   nodes.push(sticky('Note - 1 Conversation', `## 1. Conversation
 
-The n8n chat receives the question, the agent chooses among the five tools, the memory keeps the thread for follow-ups ("and for 2026?"). The system prompt carries the catalogue summary (generated) and the routing rules.`, [0, 820], 820, 460, COLORS.green));
+The n8n chat receives the question, the memory keeps the thread for follow-ups ("and for 2026?"). The agent has **one** tool, an *MCP Client Tool* pointed at the MCP server of this very workflow (section 2): it discovers the five tools there, exactly as an external client would, so the chat and the MCP clients always see the same thing. The system prompt carries the catalogue summary (generated) and the routing rules.
+
+Set the client's **Endpoint** to this workflow's production MCP URL followed by \`/sse\` (SSE transport) and give it the same Bearer token as the trigger. The workflow must be active for the chat to work, since the agent goes through the live endpoint.`, [0, 820], 820, 460, COLORS.green));
   const chatParams = DEV ? { public: true, mode: 'webhook', options: { responseMode: 'lastNode' } } : { options: {} };
   nodes.push(node('When a user asks in the chat', '@n8n/n8n-nodes-langchain.chatTrigger', 1.4, chatParams, [60, 1000], { webhookId: DEV ? cfg.chatWebhookId : randomUUID() }));
   const systemPrompt = readFileSync(join(ROOT, 'main', 'system-prompt.md'), 'utf8').replace('{{ROUTING_TABLE}}', routingTable());
   nodes.push(node('Route the question to the right tool', '@n8n/n8n-nodes-langchain.agent', 3.1, { options: { systemMessage: systemPrompt, maxIterations: 15, ...(DEV ? { returnIntermediateSteps: true } : {}) } }, [340, 1000]));
   nodes.push(node('Language model (OpenRouter)', '@n8n/n8n-nodes-langchain.lmChatOpenRouter', 1, { model: 'anthropic/claude-sonnet-5', options: { temperature: 0.2 } }, [280, 1180], { credentials: CRED('openRouterApi') }));
   nodes.push(node('Conversation memory', '@n8n/n8n-nodes-langchain.memoryBufferWindow', 1.3, {}, [500, 1180]));
+  nodes.push(node('Use the MCP server of this workflow', '@n8n/n8n-nodes-langchain.mcpClientTool', 1.2, {
+    // The MCP Server Trigger 1.1 serves the SSE transport at <production URL>/sse; the agent's
+    // client uses it to reach the five tools of this very workflow.
+    endpointUrl: DEV && cfg.mcpSelfUrl ? cfg.mcpSelfUrl : `https://YOUR-N8N-HOST/mcp/${cfg.mcpPath}/sse`,
+    serverTransport: 'sse',
+    authentication: 'bearerAuth',
+    include: 'all',
+    options: { timeout: 120000 },
+  }, [720, 1180], { credentials: CRED('httpBearerAuth') }));
+  connect(connections, 'Use the MCP server of this workflow', 'Route the question to the right tool', 'ai_tool');
   connect(connections, 'When a user asks in the chat', 'Route the question to the right tool');
   connect(connections, 'Language model (OpenRouter)', 'Route the question to the right tool', 'ai_languageModel');
   connect(connections, 'Conversation memory', 'Route the question to the right tool', 'ai_memory');
@@ -242,7 +254,7 @@ The n8n chat receives the question, the agent chooses among the five tools, the 
   // --- 2. MCP ----------------------------------------------------------------------------------
   nodes.push(sticky('Note - 2 MCP server', `## 2. MCP server
 
-The five tools are published on this endpoint, protected by Bearer Auth. Point Claude Desktop, Claude Code or Cursor at the production URL with the token. A client that only knows \`x3_query_catalog\` and \`x3_query_run\` can use every query of the catalogue.
+The five tools are published on this endpoint, protected by Bearer Auth, and nowhere else: the agent of section 1 is itself an MCP client of this endpoint. Point Claude Desktop, Claude Code or Cursor at the production URL with the token. A client that only knows \`x3_query_catalog\` and \`x3_query_run\` can use every query of the catalogue.
 
 **Careful**: \`x3_object_write\` is reachable here with no confirmation step. Disconnect it from this trigger if the MCP audience should be read-only.`, [860, 820], 820, 460, COLORS.green));
   nodes.push(node('Expose the tools as an MCP server', '@n8n/n8n-nodes-langchain.mcpTrigger', 1.1, { authentication: 'bearerAuth', path: cfg.mcpPath }, [1140, 1020], { webhookId: DEV && cfg.mcpWebhookId ? cfg.mcpWebhookId : randomUUID(), credentials: CRED('httpBearerAuth') }));
@@ -369,9 +381,9 @@ Answer: { ok, action, object, identifier, data, messages }; the identifier assig
     allow_write: true,
   }, [60, y + 240]));
 
+  // The tools are published on the MCP server only; the agent reaches them through its MCP client.
   for (const t of tools) {
     nodes.push(t);
-    connect(connections, t.name, 'Route the question to the right tool', 'ai_tool');
     connect(connections, t.name, 'Expose the tools as an MCP server', 'ai_tool');
   }
 
