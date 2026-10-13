@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Generate the three n8n workflows (runner, main agent + MCP, tests) from catalog.json.
-//   node build.mjs          -> dist/*.json, sanitised template (no credentials, placeholders)
-//   node build.mjs --dev    -> dist/dev/*.json for a local instance, using dev/dev.config.json
+//   node build.mjs          -> workflows/*.json, sanitised template (no credentials, placeholders)
+//   node build.mjs --dev    -> workflows/dev/*.json for a local instance, using dev/dev.config.json
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -13,12 +13,12 @@ const S = catalog.settings;
 const cfg = DEV
   ? JSON.parse(readFileSync(join(ROOT, 'dev', 'dev.config.json'), 'utf8'))
   : { nodePrefix: 'n8n-nodes-nx3', namePrefix: '', ids: {}, credentials: {}, mcpPath: S.mcp_path, x3User: 'YOUR_X3_USER' };
-const OUT = DEV ? join(ROOT, 'dist', 'dev') : join(ROOT, 'dist');
+const OUT = DEV ? join(ROOT, 'workflows', 'dev') : join(ROOT, 'workflows');
 mkdirSync(OUT, { recursive: true });
 
 const NX3 = `${cfg.nodePrefix}.nx3Soap`;
 const NX3_TOOL = `${cfg.nodePrefix}.nx3SoapTool`;
-const RUNNER_NAME = cfg.namePrefix + S.runner_name;
+const RUNNER_NAME = cfg.namePrefix + S.runner_name; // label of the nested SQL runner section
 const MAIN_NAME = cfg.namePrefix + S.main_name;
 const TESTS_NAME = cfg.namePrefix + 'X3 SQL Runner tests';
 const COLORS = { grey: 7, red: 3, green: 4, blue: 5, purple: 6, orange: 2, yellow: 1 };
@@ -50,58 +50,26 @@ function connect(connections, from, to, type = 'main', fromIndex = 0) {
 const bt = (s) => String(s).replace(/`/g, "'").replace(/\}\}/g, '} }');
 
 // ---------------------------------------------------------------------------------------------
-// 1. Runner sub-workflow
+// 1. Nested SQL runner: the branch every x3_query_* tool call lands on
 // ---------------------------------------------------------------------------------------------
-function buildRunner() {
-  const nodes = [];
-  const connections = {};
-  const maxTime = Math.max(...catalog.queries.map((q) => q.max_time || S.default_max_time));
+function addSqlRunner(nodes, connections, y, from, fromIndex) {
+  nodes.push(sticky('Note - 6 SQL runner', `## 6. Nested SQL runner (\`kind: sql\`)
 
-  nodes.push(sticky('Note - Runner overview', `## X3 SQL Runner
+Every \`x3_query_catalog\` / \`x3_query_run\` call re-enters **this workflow** through the trigger of section 8 and lands here.
 
-One sub-workflow runs **every** SQL query of the catalogue. The caller (an AI Agent tool, an MCP client, another workflow) passes:
-
-- \`action\`: \`run\` (default), \`analyse\` (compile only, no rows) or \`catalog\` (list the queries and their filters)
-- \`query\`: the query name, e.g. \`x3_customer_search\`
-- \`params\`: an object \`{ filter: value }\`; lists are comma separated, dates \`YYYY-MM-DD\`
-- \`max_rows\`: optional cap, never above ${S.hard_max_rows}
-
-The catalogue itself (${catalog.queries.length} queries, ${catalog.queries.reduce((a, q) => a + q.filters.length, 0)} filters) is embedded in the first Code node by \`build.mjs\` from \`catalog.json\` and \`sql/*.sql\`. **Do not edit it here**: change the files and run \`node build.mjs\`, then re-import.
-
-Requires n8n-nodes-nx3 **0.6.0 or later** (Parameters Mode: JSON).`, [-720, -40], 660, 560, COLORS.yellow));
-
-  nodes.push(sticky('Note - How a call flows', `## How a call flows
-
-1. **Resolve** looks the query up, normalises the params (JSON string or object, case-insensitive keys, stray quotes and % removed), refuses unknown filters, missing required ones and badly typed values **before** anything reaches Sage X3, composes the SQL by inserting each filter as an optional \`[[ ... ]]\` block at its \`/*FILTERS*/\` marker, and caps the row count.
+1. **Resolve** looks the query up in the catalogue embedded in its code (${catalog.queries.length} queries, ${catalog.queries.reduce((a, q) => a + q.filters.length, 0)} filters, generated from \`catalog.json\` and \`sql/*.sql\` by \`build.mjs\`), normalises the params (JSON text or object, case-insensitive keys, stray quotes and % removed), refuses unknown filters, missing required ones and badly typed values **before** anything reaches Sage X3, composes the SQL by inserting each filter as an optional \`[[ ... ]]\` block at its \`/*FILTERS*/\` marker, and caps the row count (hard cap ${S.hard_max_rows}).
 2. **Route** sends errors and catalogue answers straight to Shape, \`run\` to SQL Select, \`analyse\` to SQL Analyse.
-3. The two Sage X3 nodes get the query and the parameter list **by expression** (\`Parameters Mode: JSON\`). They continue on failure so a Sage X3 outage becomes a structured answer, not a crashed tool call.
-4. **Shape** returns one stable object whatever happened.`, [0, -480], 1360, 400, COLORS.yellow));
+3. The two Sage X3 nodes receive the query and the parameter list **by expression** (\`Parameters Mode: JSON\`, node 0.6.0+) and continue on failure.
+4. **Shape** returns \`{ ok, query, rowCount, truncated, max_rows, columns, rows, params_used, warnings }\` or \`{ ok: false, error, message }\`.
 
-  nodes.push(sticky('Note - Response contract', `## Response contract
+**Do not edit the catalogue here**: change the files and run \`node build.mjs\`, then re-import.`, [0, y], 1680, 600, COLORS.yellow));
 
-\`\`\`json
-{ "ok": true, "query": "x3_customer_search", "mode": "run",
-  "rowCount": 12, "truncated": false, "max_rows": 200,
-  "columns": ["CUSTOMER_CODE", "..."], "rows": [["FR001", "..."]],
-  "params_used": { "category": "FR" }, "warnings": [] }
-\`\`\`
-
-On failure: \`{ "ok": false, "error": "<code>", "message": "..." }\` where the code is one of \`unknown_query\` (with \`available\`), \`unknown_filter\` (with \`valid_filters\`), \`missing_required\`, \`invalid_value\`, \`invalid_params\`, \`x3_error\`, \`transport_error\`.
-
-\`action: catalog\` returns \`{ ok, count, groups, queries: [{ name, group, purpose, returns, filters: [...] }] }\`.`, [1440, -480], 640, 720, COLORS.yellow));
-
-  nodes.push(node('When called by a tool', 'n8n-nodes-base.executeWorkflowTrigger', 1.2, {
-    inputSource: 'workflowInputs',
-    workflowInputs: { values: [{ name: 'action', type: 'string' }, { name: 'query', type: 'string' }, { name: 'params', type: 'any' }, { name: 'max_rows', type: 'any' }] },
-  }, [0, 80]));
-
-  nodes.push(node('Resolve query and validate params', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('resolve.js', catalog) }, [320, 80]));
-
-  nodes.push(node('Route by action', 'n8n-nodes-base.switch', 3.2, {
+  const r = (name) => name;
+  nodes.push(node(r('Resolve query and validate params'), 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('resolve.js', catalog) }, [380, y + 400]));
+  nodes.push(node(r('Route the SQL action'), 'n8n-nodes-base.switch', 3.2, {
     mode: 'expression', numberOutputs: 3,
     output: "={{ $json.ok !== true ? 2 : ($json.mode === 'analyse' ? 1 : 0) }}",
-  }, [640, 80]));
-
+  }, [700, y + 400]));
   const sqlCommon = {
     sqlQuery: '={{ $json.sqlQuery }}',
     sqlParametersMode: 'json',
@@ -109,75 +77,69 @@ On failure: \`{ "ok": false, "error": "<code>", "message": "..." }\` where the c
     sqlOptions: { maxLines: '={{ $json.maxLines }}', maxTime: '={{ $json.maxTime }}' },
     advanced: { requestTimeout: '={{ $json.requestTimeout }}' },
   };
-  nodes.push(node('Run SQL on Sage X3', NX3, 1, { operation: 'sqlSelect', ...sqlCommon, simplify: true, rowFormat: 'arrays' }, [960, -80], { onError: 'continueRegularOutput', credentials: CRED('nx3SoapApi') }));
-  nodes.push(node('Analyse SQL on Sage X3', NX3, 1, { operation: 'sqlAnalyse', ...sqlCommon }, [960, 160], { onError: 'continueRegularOutput', credentials: CRED('nx3SoapApi') }));
+  nodes.push(node(r('Run SQL on Sage X3'), NX3, 1, { operation: 'sqlSelect', ...sqlCommon, simplify: true, rowFormat: 'arrays' }, [1020, y + 300], { onError: 'continueRegularOutput', credentials: CRED('nx3SoapApi') }));
+  nodes.push(node(r('Analyse SQL on Sage X3'), NX3, 1, { operation: 'sqlAnalyse', ...sqlCommon }, [1020, y + 500], { onError: 'continueRegularOutput', credentials: CRED('nx3SoapApi') }));
+  nodes.push(node(r('Shape the response'), 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('shape.js', catalog) }, [1340, y + 400]));
 
-  nodes.push(node('Shape the response', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('shape.js', catalog) }, [1280, 80]));
-
-  connect(connections, 'When called by a tool', 'Resolve query and validate params');
-  connect(connections, 'Resolve query and validate params', 'Route by action');
-  connect(connections, 'Route by action', 'Run SQL on Sage X3', 'main', 0);
-  connect(connections, 'Route by action', 'Analyse SQL on Sage X3', 'main', 1);
-  connect(connections, 'Route by action', 'Shape the response', 'main', 2);
+  connect(connections, from, 'Resolve query and validate params', 'main', fromIndex);
+  connect(connections, 'Resolve query and validate params', 'Route the SQL action');
+  connect(connections, 'Route the SQL action', 'Run SQL on Sage X3', 'main', 0);
+  connect(connections, 'Route the SQL action', 'Analyse SQL on Sage X3', 'main', 1);
+  connect(connections, 'Route the SQL action', 'Shape the response', 'main', 2);
   connect(connections, 'Run SQL on Sage X3', 'Shape the response');
   connect(connections, 'Analyse SQL on Sage X3', 'Shape the response');
-
-  return workflow(RUNNER_NAME, nodes, connections, cfg.ids.runner, { settings: { executionTimeout: maxTime + (S.request_timeout_margin || 10) + 30, callerPolicy: 'workflowsFromSameOwner' }, ...(DEV ? { active: true } : {}) });
+  return y + 660;
 }
 
 // ---------------------------------------------------------------------------------------------
-// 2. Object runner sub-workflow: describe / list / read / create / modify through one entry point
+// 2. Nested object runner: describe / list / read / create / modify
 // ---------------------------------------------------------------------------------------------
-const OBJECT_RUNNER_NAME = cfg.namePrefix + 'X3 Object Runner';
+const OBJECT_RUNNER_NAME = 'X3 Object Runner';
 
-function buildObjectRunner() {
-  const nodes = [];
-  const connections = {};
-  nodes.push(sticky('Note - Object runner', `## X3 Object Runner
+function addObjectRunner(nodes, connections, y, from, fromIndex) {
+  nodes.push(sticky('Note - 7 Object runner', `## 7. Nested object runner (\`kind: object\`)
 
-One sub-workflow for the Sage X3 object layer. The caller passes \`action\` (describe, list, read, create, modify), \`object\` (SOH, ITM, BPC...), optional \`transaction\`, \`identifier\` (composite keys joined with ~), \`data\` (payload by screen block) and \`allow_write\`.
+Every \`x3_object\` / \`x3_object_write\` call lands here. **Validate** checks the action (describe, list, read, create, modify), the object code, the identifier and the payload before anything reaches Sage X3, and refuses create and modify unless \`allow_write\` is true: \`x3_object\` never writes, only \`x3_object_write\` does. **Route** sends each action to its own Sage X3 node; **Shape** returns \`{ ok, action, object, identifier, data, messages }\` or \`{ ok: false, error, message }\`.
 
-**Validate** checks the action, the object code, the identifier and the payload before anything reaches Sage X3, and refuses create and modify unless \`allow_write\` is true: the read tool (\`x3_object\`) never writes, only \`x3_object_write\` does. **Route** sends each action to its own Sage X3 node; **Shape** returns one stable object \`{ ok, action, object, identifier, data, messages }\` or \`{ ok: false, error, message }\`.
+Replace \`${cfg.x3User}\` on the Create node by the X3 user the records must be created under.`, [0, y], 1680, 780, COLORS.yellow));
 
-Replace \`${cfg.x3User}\` on the Create node by the X3 user the records must be created under.`, [-720, -40], 660, 520, COLORS.yellow));
-
-  nodes.push(node('When called by a tool', 'n8n-nodes-base.executeWorkflowTrigger', 1.2, {
-    inputSource: 'workflowInputs',
-    workflowInputs: { values: [{ name: 'action', type: 'string' }, { name: 'object', type: 'string' }, { name: 'transaction', type: 'string' }, { name: 'identifier', type: 'string' }, { name: 'data', type: 'any' }, { name: 'allow_write', type: 'any' }] },
-  }, [0, 80]));
-  nodes.push(node('Validate the object call', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('object-validate.js', catalog) }, [320, 80]));
-  nodes.push(node('Route by action', 'n8n-nodes-base.switch', 3.2, {
+  nodes.push(node('Validate the object call', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('object-validate.js', catalog) }, [380, y + 480]));
+  nodes.push(node('Route the object action', 'n8n-nodes-base.switch', 3.2, {
     mode: 'expression', numberOutputs: 6,
     output: "={{ $json.ok !== true ? 5 : ['describe', 'list', 'read', 'create', 'modify'].indexOf($json.action) }}",
-  }, [640, 80]));
-  const x3 = (name, params, y) => node(name, NX3, 1, params, [960, y], { onError: 'continueRegularOutput', credentials: CRED('nx3SoapApi') });
-  nodes.push(x3('Describe the object', { operation: 'describe', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', x3Context: {}, advanced: {} }, -320));
-  nodes.push(x3('List the records', { operation: 'list', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', data: '={{ $json.data }}', x3Context: {}, advanced: {} }, -120));
-  nodes.push(x3('Read the record', { operation: 'read', actionCode: 'READ', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', ident: '={{ $json.identifier }}', x3Context: {}, advanced: {} }, 80));
-  nodes.push(x3('Create the record', { operation: 'create', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', ident: '={{ $json.identifier }}', data: '={{ $json.data }}', x3Context: { user: cfg.x3User }, advanced: {} }, 280));
-  nodes.push(x3('Modify the record', { operation: 'modify', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', ident: '={{ $json.identifier }}', data: '={{ $json.data }}', x3Context: {}, advanced: {} }, 480));
-  nodes.push(node('Shape the object response', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('object-shape.js', catalog) }, [1280, 80]));
+  }, [700, y + 480]));
+  const x3 = (name, params, dy) => node(name, NX3, 1, params, [1020, y + dy], { onError: 'continueRegularOutput', credentials: CRED('nx3SoapApi') });
+  nodes.push(x3('Describe the object', { operation: 'describe', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', x3Context: {}, advanced: {} }, 160));
+  nodes.push(x3('List the records', { operation: 'list', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', data: '={{ $json.data }}', x3Context: {}, advanced: {} }, 320));
+  nodes.push(x3('Read the record', { operation: 'read', actionCode: 'READ', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', ident: '={{ $json.identifier }}', x3Context: {}, advanced: {} }, 480));
+  nodes.push(x3('Create the record', { operation: 'create', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', ident: '={{ $json.identifier }}', data: '={{ $json.data }}', x3Context: { user: cfg.x3User }, advanced: {} }, 640));
+  nodes.push(x3('Modify the record', { operation: 'modify', object: '={{ $json.object }}', transaction: '={{ $json.transaction }}', ident: '={{ $json.identifier }}', data: '={{ $json.data }}', x3Context: {}, advanced: {} }, 800));
+  nodes.push(node('Shape the object response', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: readRunnerSource('object-shape.js', catalog) }, [1340, y + 480]));
 
-  connect(connections, 'When called by a tool', 'Validate the object call');
-  connect(connections, 'Validate the object call', 'Route by action');
+  connect(connections, from, 'Validate the object call', 'main', fromIndex);
+  connect(connections, 'Validate the object call', 'Route the object action');
   ['Describe the object', 'List the records', 'Read the record', 'Create the record', 'Modify the record'].forEach((n, i) => {
-    connect(connections, 'Route by action', n, 'main', i);
+    connect(connections, 'Route the object action', n, 'main', i);
     connect(connections, n, 'Shape the object response');
   });
-  connect(connections, 'Route by action', 'Shape the object response', 'main', 5);
-  return workflow(OBJECT_RUNNER_NAME, nodes, connections, cfg.ids.objectRunner, { settings: { executionTimeout: 120, callerPolicy: 'workflowsFromSameOwner' }, ...(DEV ? { active: true } : {}) });
+  connect(connections, 'Route the object action', 'Shape the object response', 'main', 5);
+  return y + 840;
 }
 
 // ---------------------------------------------------------------------------------------------
 // 3. Main workflow: chat agent + MCP server + five generic tools
 // ---------------------------------------------------------------------------------------------
-const runnerRef = (id, name) => (DEV
-  ? { __rl: true, value: id, mode: 'list', cachedResultName: name }
-  : { __rl: true, value: '', mode: 'list', cachedResultName: `${name} (select it after importing it)` });
+// Every tool calls THIS workflow back: it re-enters through the Execute Workflow Trigger of the
+// nested runner section, so the whole server is one importable workflow.
+const selfRef = () => (DEV
+  ? { __rl: true, value: cfg.ids.main, mode: 'list', cachedResultName: MAIN_NAME }
+  : { __rl: true, value: '', mode: 'list', cachedResultName: `${MAIN_NAME} (select THIS workflow after importing it)` });
 
 const schemaField = (id, type) => ({ id, displayName: id, required: false, defaultMatch: false, display: true, type, canBeUsedToMatch: true, removed: false });
-const sqlSchema = [schemaField('action', 'string'), schemaField('query', 'string'), schemaField('params', 'any'), schemaField('max_rows', 'any')];
-const objectSchema = [schemaField('action', 'string'), schemaField('object', 'string'), schemaField('transaction', 'string'), schemaField('identifier', 'string'), schemaField('data', 'any'), schemaField('allow_write', 'any')];
+const RUNNER_INPUTS = [['kind', 'string'], ['action', 'string'], ['query', 'string'], ['params', 'any'], ['max_rows', 'any'], ['object', 'string'], ['transaction', 'string'], ['identifier', 'string'], ['data', 'any'], ['allow_write', 'any']];
+const runnerSchema = RUNNER_INPUTS.map(([id, type]) => schemaField(id, type));
+const sqlSchema = runnerSchema;
+const objectSchema = runnerSchema;
 
 function toolWorkflow(name, description, ref, schema, value, position) {
   return node(name, '@n8n/n8n-nodes-langchain.toolWorkflow', 2.2, {
@@ -218,8 +180,8 @@ function buildMain() {
   const tools = [];
   const nQueries = catalog.queries.length;
   const nFilters = catalog.queries.reduce((a, q) => a + q.filters.length, 0);
-  const sqlRef = runnerRef(cfg.ids.runner, RUNNER_NAME);
-  const objRef = runnerRef(cfg.ids.objectRunner, OBJECT_RUNNER_NAME);
+  const sqlRef = selfRef();
+  const objRef = selfRef();
 
   nodes.push(sticky('Note - Overview', `## Query Sage X3 in natural language, with five tools
 
@@ -227,8 +189,8 @@ An AI agent answers sales, stock, revenue, purchasing and finance questions and 
 
 ### Why only five tools
 
-- **The queries are a catalogue, not tools.** ${nQueries} parameterised SQL queries with ${nFilters} WHERE filters live in \`catalog.json\` + \`sql/*.sql\`. \`x3_query_catalog\` lets the model discover them and their filters; \`x3_query_run\` runs any of them by name. One sub-workflow, *${S.runner_name}*, validates every filter, composes the SQL, calls Sage X3 with the parameters passed **by expression** and returns one stable shape. Adding a query never adds a tool: one JSON entry, one SQL file, \`node build.mjs\`.
-- **The object layer is two tools.** \`x3_object\` reads (describe, list, read) through *${OBJECT_RUNNER_NAME}*; \`x3_object_write\` creates and modifies through the same runner, and is the only tool able to write. \`x3_object_guide\` carries the method (find the object with the \`x3_object_search\` query, describe, list, read, then write).
+- **The queries are a catalogue, not tools.** ${nQueries} parameterised SQL queries with ${nFilters} WHERE filters live in \`catalog.json\` + \`sql/*.sql\`. \`x3_query_catalog\` lets the model discover them and their filters; \`x3_query_run\` runs any of them by name. One nested runner (section 6) validates every filter, composes the SQL, calls Sage X3 with the parameters passed **by expression** and returns one stable shape. Adding a query never adds a tool: one JSON entry, one SQL file, \`node build.mjs\`.
+- **The object layer is two tools.** \`x3_object\` reads (describe, list, read) through the nested object runner (section 7); \`x3_object_write\` creates and modifies through the same runner, and is the only tool able to write. \`x3_object_guide\` carries the method (find the object with the \`x3_object_search\` query, describe, list, read, then write).
 
 ### How a question travels
 
@@ -244,11 +206,11 @@ The canvas is generated by \`build.mjs\`: edit the catalogue and the templates, 
 ### 1. Community node
 **n8n-nodes-nx3 0.6.0 or later** (Settings > Community nodes). The SQL runner uses its *Parameters Mode: JSON*.
 
-### 2. Import the two runners first
-Import \`${S.runner_name}\` and \`${OBJECT_RUNNER_NAME}\`, then this workflow. On the four *Call n8n Workflow* tools, the **Workflow** field must point to the right runner${DEV ? ' (already set for this DEV build)' : ': select it once, or run build.mjs with the runner ids in a dev config'}.
+### 2. Point the tools at this workflow
+Everything is nested in this single workflow: the four *Call n8n Workflow* tools call it back and re-enter through the trigger of section 8. After importing, open each of the four tools and select **this workflow** in the **Workflow** field${DEV ? ' (already set for this DEV build)' : ' (or run build.mjs --dev with the workflow id in a dev config)'}.
 
 ### 3. Credentials
-- **Nx3 SOAP API** on the Sage X3 nodes of both runners.
+- **Nx3 SOAP API** on the seven Sage X3 nodes of sections 6 and 7.
 - **Bearer Auth** on the MCP Server Trigger (\`openssl rand -hex 32\`).
 - **OpenRouter** (or any chat model) on the model node.
 - **Header Auth** on \`X3_Support\` if you keep that knowledge-base tool.
@@ -256,7 +218,7 @@ Import \`${S.runner_name}\` and \`${OBJECT_RUNNER_NAME}\`, then this workflow. O
 ### 4. Placeholders
 | Where | Value | Replace with |
 |---|---|---|
-| Object runner, Create node | \`YOUR_X3_USER\` | the X3 user the records are created under |
+| Section 7, *Create the record* | \`YOUR_X3_USER\` | the X3 user the records are created under |
 | MCP Server Trigger | path \`${S.mcp_path}\` | any path |
 | \`catalog.json\` settings | \`lang: ${S.lang}\` | your label language if the folder has no English texts |
 
@@ -288,11 +250,11 @@ The five tools are published on this endpoint, protected by Bearer Auth. Point C
   // --- 3. SQL through the catalogue ------------------------------------------------------------
   nodes.push(sticky('Note - 3 SQL queries through the catalogue', `## 3. SQL queries: two tools for ${nQueries} queries
 
-\`x3_query_catalog\` describes the queries (filters, types, required ones, caps); \`x3_query_run\` runs one by name with a \`params\` object. Both call *${S.runner_name}*. The catalogue today:
+\`x3_query_catalog\` describes the queries (filters, types, required ones, caps); \`x3_query_run\` runs one by name with a \`params\` object. Both re-enter this workflow and run through the nested SQL runner (section 6). The catalogue today:
 
 ${catalogSummary()}
 
-**Adding a query**: one entry in \`catalog.json\`, one file in \`sql/\` with \`/*FILTERS*/\` markers, \`node build.mjs\`, re-import the runner. Nothing changes here: the catalogue is discovered at run time.`, [0, 1340], 1680, 560, COLORS.blue));
+**Adding a query**: one entry in \`catalog.json\`, one file in \`sql/\` with \`/*FILTERS*/\` markers, \`node build.mjs\`, re-import this workflow. No new tool: the catalogue is discovered at run time.`, [0, 1340], 1680, 560, COLORS.blue));
   tools.push(toolWorkflow('x3_query_catalog', `Purpose: list the Sage X3 SQL queries available on this server, with their group, purpose, returned columns, filters (name, type, required) and row cap. Call it when you are not certain which query answers the question or which filters it takes.
 
 Parameters:
@@ -302,7 +264,7 @@ Parameters:
 Answer: { ok, count, groups, queries: [{ name, group, purpose, returns, notes, filters: [{ name, type, required, description }], max_rows }] }.
 
 Next step: x3_query_run with the chosen query name and a params object built from its filters.`, sqlRef, sqlSchema, {
-    action: 'catalog', query: '',
+    kind: 'sql', action: 'catalog', query: '',
     params: "={{ ({ \"group\": $fromAI('group', `Optional group: " + Object.keys(catalog.groups).join(', ') + ". Leave empty for all.`, 'string', ''), \"name\": $fromAI('name', `Optional fragment of a query name. Leave empty for all.`, 'string', '') }) }}",
     max_rows: 0,
   }, [60, 1720]));
@@ -314,7 +276,7 @@ Parameters:
 - max_rows (number): optional row cap, never above ${S.hard_max_rows}; 0 for the query default.
 
 Answer: { ok, query, rowCount, columns, rows (arrays, same order as columns), truncated, warnings, params_used }. When ok is false, error tells what to fix: unknown_query (see available), unknown_filter (see valid_filters), missing_required, invalid_value; x3_error and transport_error come from Sage X3. truncated true means the result stops at max_rows: say so and narrow the filters.`, sqlRef, sqlSchema, {
-    action: 'run',
+    kind: 'sql', action: 'run',
     query: "={{ $fromAI('query', `Name of the query to run, e.g. x3_customer_search. See x3_query_catalog.`, 'string') }}",
     params: "={{ $fromAI('params', `Filters as a JSON object written as text, e.g. {\"category\": \"FR\", \"date_from\": \"2025-01-01\"}. Raw values, no quotes inside values, no % signs; lists comma separated; dates YYYY-MM-DD. Leave empty for no filter.`, 'string', '') }}",
     max_rows: "={{ $fromAI('max_rows', `Optional row cap, 0 for the query default.`, 'number', 0) }}",
@@ -344,6 +306,7 @@ Parameters:
 Answer: { ok, action, object, identifier, data, messages }. describe: blocks and fields, large, call it once per object. list: data.fields names the positions, data.values holds one array per record. read: blocks of fields, each field an array even for one value. When ok is false read error and message (missing_identifier, invalid_object, x3_error...).
 
 Use instead: a SQL query through x3_query_run for a search with several criteria, labels or amounts. Next step: x3_object_write to change the record, after confirmation.`, objRef, objectSchema, {
+    kind: 'object',
     action: "={{ $fromAI('action', `describe, list or read.`, 'string') }}",
     object: "={{ $fromAI('object', `Sage X3 object code, e.g. SOH, ITM, BPC. From the x3_object_search query when unknown.`, 'string') }}",
     transaction: "={{ $fromAI('transaction', `Empty for master data, ALL for documents unless the user names a transaction.`, 'string', '') }}",
@@ -397,6 +360,7 @@ Parameters:
 - data (object, REQUIRED): payload by screen block. create example for a sales order: { "SOH0": { "BPCORD": "FR001", "SALFCY": "FR011", "SOHTYP": "SON", "CUSORDREF": "PO-4521" }, "SOH2": { "STOFCY": "FR011" }, "SOH4": { "ITMREF": ["FIN008"], "QTY": [10], "DDEMDLVDAT": ["2026-11-15"] } }. Grid columns are index-aligned arrays of the same length; dates YYYY-MM-DD; local menus as integers; numbers bare. modify: only the fields to change, FIELD(n) targets row n of a grid, e.g. { "SOH4": { "QTY(2)": 15 } }. Never send the document number on a create when X3 numbers it.
 
 Answer: { ok, action, object, identifier, data, messages }; the identifier assigned by Sage X3 is in messages or identifier. ok false means nothing was written: read message, fix, ask before retrying.`, objRef, objectSchema, {
+    kind: 'object',
     action: "={{ $fromAI('action', `create or modify.`, 'string') }}",
     object: "={{ $fromAI('object', `Sage X3 object code, e.g. SOH, POH, BPC, ITM.`, 'string') }}",
     transaction: "={{ $fromAI('transaction', `ALL for documents, empty for master data, unless the user names a transaction.`, 'string', '') }}",
@@ -410,7 +374,26 @@ Answer: { ok, action, object, identifier, data, messages }; the identifier assig
     connect(connections, t.name, 'Route the question to the right tool', 'ai_tool');
     connect(connections, t.name, 'Expose the tools as an MCP server', 'ai_tool');
   }
-  return workflow(MAIN_NAME, nodes, connections, cfg.ids.main, DEV ? { active: true } : {});
+
+  // --- 8. The single re-entry point of the nested runners --------------------------------------
+  y += 460;
+  nodes.push(sticky('Note - 8 Re-entry point', `## 8. Where the tool calls come back in
+
+The four *Call n8n Workflow* tools call **this very workflow**. n8n starts a sub-execution at this trigger with the tool's fields: \`kind\` (sql or object) picks the runner below, the other fields are what the model filled in. Nothing else should connect to this trigger.
+
+Inputs: ${RUNNER_INPUTS.map(([n]) => '\`' + n + '\`').join(', ')}.`, [0, y], 1680, 300, COLORS.yellow));
+  nodes.push(node('When a tool calls this workflow', 'n8n-nodes-base.executeWorkflowTrigger', 1.2, {
+    inputSource: 'workflowInputs',
+    workflowInputs: { values: RUNNER_INPUTS.map(([name, type]) => ({ name, type })) },
+  }, [60, y + 180]));
+  nodes.push(node('Route by kind', 'n8n-nodes-base.switch', 3.2, { mode: 'expression', numberOutputs: 2, output: "={{ $json.kind === 'object' ? 1 : 0 }}" }, [380, y + 180]));
+  connect(connections, 'When a tool calls this workflow', 'Route by kind');
+  y += 360;
+  y = addSqlRunner(nodes, connections, y, 'Route by kind', 0);
+  addObjectRunner(nodes, connections, y, 'Route by kind', 1);
+
+  const maxTime = Math.max(...catalog.queries.map((q) => q.max_time || S.default_max_time));
+  return workflow(MAIN_NAME, nodes, connections, cfg.ids.main, { settings: { executionTimeout: Math.max(120, maxTime + (S.request_timeout_margin || 10) + 30), callerPolicy: 'workflowsFromSameOwner' }, ...(DEV ? { active: true } : {}) });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -422,7 +405,7 @@ function buildTests() {
   const connections = {};
   nodes.push(sticky('Note - Runner tests', `## Runner tests
 
-POST to this webhook with \`{}\` to run the ${cases.length} default cases of \`test/cases.json\` against *${RUNNER_NAME}* and *${OBJECT_RUNNER_NAME}*, or with \`{ "cases": [...] }\` for your own. A case is \`{ name, target: "sql" | "object", input: {...}, expect: { ok, error, count, rows, min_rows, column0, truncated, max_rows, params_used, all_rows, some_row } }\`. The answer is \`{ passed, failed, results: [...] }\`. The default cases are read-only against Sage X3.`, [-100, -300], 1500, 260, COLORS.yellow));
+POST to this webhook with \`{}\` to run the ${cases.length} default cases of \`test/cases.json\` against the nested runners of *${MAIN_NAME}*, or with \`{ "cases": [...] }\` for your own. A case is \`{ name, target: "sql" | "object", input: {...}, expect: { ok, error, count, rows, min_rows, column0, truncated, max_rows, params_used, all_rows, some_row } }\`. The answer is \`{ passed, failed, results: [...] }\`. The default cases are read-only against Sage X3.`, [-100, -300], 1500, 260, COLORS.yellow));
   nodes.push(node('Receive the test request', 'n8n-nodes-base.webhook', 2.1, { httpMethod: 'POST', path: cfg.testsWebhookPath || 'x3-runner-tests', responseMode: 'lastNode', options: {} }, [0, 0], { webhookId: DEV ? 'dev-x3-tests-00000000001' : randomUUID() }));
   nodes.push(node('Expand cases', 'n8n-nodes-base.code', 2, { mode: 'runOnceForAllItems', jsCode: `const DEFAULT_CASES = ${JSON.stringify(cases)};
 const body = ($input.first() && $input.first().json.body) || {};
@@ -430,13 +413,13 @@ const cases = Array.isArray(body.cases) && body.cases.length ? body.cases : DEFA
 return cases.map((c, i) => ({ json: { index: i, name: c.name, target: c.target === 'object' ? 'object' : 'sql', input: c.input || {}, expect: c.expect || {} } }));` }, [320, 0]));
   nodes.push(node('Route by target', 'n8n-nodes-base.switch', 3.2, { mode: 'expression', numberOutputs: 2, output: "={{ $json.target === 'object' ? 1 : 0 }}" }, [640, 0]));
   nodes.push(node('Call the SQL runner', 'n8n-nodes-base.executeWorkflow', 1.3, {
-    mode: 'each', source: 'database', workflowId: runnerRef(cfg.ids.runner, RUNNER_NAME),
-    workflowInputs: { mappingMode: 'defineBelow', value: { action: "={{ $json.input.action || 'run' }}", query: "={{ $json.input.query || '' }}", params: '={{ $json.input.params || {} }}', max_rows: '={{ $json.input.max_rows || 0 }}' }, matchingColumns: [], schema: sqlSchema, attemptToConvertTypes: false, convertFieldsToString: false },
+    mode: 'each', source: 'database', workflowId: selfRef(),
+    workflowInputs: { mappingMode: 'defineBelow', value: { kind: 'sql', action: "={{ $json.input.action || 'run' }}", query: "={{ $json.input.query || '' }}", params: '={{ $json.input.params || {} }}', max_rows: '={{ $json.input.max_rows || 0 }}' }, matchingColumns: [], schema: sqlSchema, attemptToConvertTypes: false, convertFieldsToString: false },
     options: { waitForSubWorkflow: true },
   }, [960, -120], { onError: 'continueRegularOutput' }));
   nodes.push(node('Call the object runner', 'n8n-nodes-base.executeWorkflow', 1.3, {
-    mode: 'each', source: 'database', workflowId: runnerRef(cfg.ids.objectRunner, OBJECT_RUNNER_NAME),
-    workflowInputs: { mappingMode: 'defineBelow', value: { action: "={{ $json.input.action || '' }}", object: "={{ $json.input.object || '' }}", transaction: "={{ $json.input.transaction || '' }}", identifier: "={{ $json.input.identifier || '' }}", data: '={{ $json.input.data || {} }}', allow_write: '={{ $json.input.allow_write === true }}' }, matchingColumns: [], schema: objectSchema, attemptToConvertTypes: false, convertFieldsToString: false },
+    mode: 'each', source: 'database', workflowId: selfRef(),
+    workflowInputs: { mappingMode: 'defineBelow', value: { kind: 'object', action: "={{ $json.input.action || '' }}", object: "={{ $json.input.object || '' }}", transaction: "={{ $json.input.transaction || '' }}", identifier: "={{ $json.input.identifier || '' }}", data: '={{ $json.input.data || {} }}', allow_write: '={{ $json.input.allow_write === true }}' }, matchingColumns: [], schema: objectSchema, attemptToConvertTypes: false, convertFieldsToString: false },
     options: { waitForSubWorkflow: true },
   }, [960, 120], { onError: 'continueRegularOutput' }));
   nodes.push(node('Collect results', 'n8n-nodes-base.merge', 3, { mode: 'append', numberInputs: 2 }, [1280, 0]));
@@ -474,7 +457,7 @@ return [{ json: { passed: out.filter((o) => o.passed).length, failed: out.filter
 }
 
 // ---------------------------------------------------------------------------------------------
-const files = { 'runner.json': buildRunner(), 'object-runner.json': buildObjectRunner(), 'main.json': buildMain(), 'tests.json': buildTests() };
+const files = { 'main.json': buildMain(), 'tests.json': buildTests() };
 for (const [f, wf] of Object.entries(files)) {
   writeFileSync(join(OUT, f), JSON.stringify(wf, null, 2) + '\n');
   console.log(`${DEV ? '[dev] ' : ''}${f}: ${wf.nodes.length} nodes -> ${join(OUT, f)}`);

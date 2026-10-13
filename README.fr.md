@@ -673,11 +673,8 @@ signalé dans `warnings` : le résultat n'est jamais faux en silence.
 
 **Paramètres**
 
-- **Query Source** : *Query Code* (défaut) lit la fiche `ALT` dans Sage X3.
-  *Incoming Item* prend la définition dans l'item entrant, tel que produit par
-  `Read Sage X3 Object` sur `ALT` (il cherche `data.ALT1.CLBFL`, `ALT1.CLBFL`
-  seul, ou une chaîne `CLBFL`). *Manual* prend le XML et les critères dans des
-  champs.
+- **Query Code** : le code du requêteur, tel qu'affiché dans la fonction
+  Requêteur de X3 (`FRVEN055`). Le nœud lit lui-même la fiche `ALT`.
 - **Execute** : activé par défaut, le SQL est exécuté sur Sage X3 et les
   lignes reviennent. Désactivé, le nœud renvoie seulement le SQL et la
   structure du requêteur.
@@ -848,8 +845,9 @@ server* sur n8n.io est un montage complet agent + MCP basé sur ce nœud.
   peut pas écrire de SQL, les valeurs sont échappées par le nœud, et les
   filtres non renseignés disparaissent d'eux-mêmes. **C'est l'approche à
   privilégier.**
-- **Les requêtes vivent dans un catalogue, un seul runner les exécute** : un
-  sous-workflow reçoit un nom de requête et un objet de filtres, retrouve la
+- **Les requêtes vivent dans un catalogue, un seul runner les exécute** : une
+  branche du même workflow, rappelée via un Execute Workflow Trigger, reçoit un
+  nom de requête et un objet de filtres, retrouve la
   requête dans un catalogue JSON, valide les filtres et appelle un unique nœud
   SQL Select en **Parameters Mode : JSON**. L'agent et les clients MCP ne
   voient que deux outils, `x3_query_catalog` et `x3_query_run`, quelle que soit
@@ -922,7 +920,7 @@ Chaque octet renvoyé par un outil coûte des tokens, à chaque appel :
 
 - Le template de [`templates/sage-x3-sql-mcp/`](templates/sage-x3-sql-mcp/README.md)
   range ses requêtes et leurs filtres WHERE dans un catalogue JSON, les exécute
-  toutes via un sous-workflow runner en **Parameters Mode : JSON**, et n'expose
+  toutes via un runner imbriqué dans le même workflow en **Parameters Mode : JSON**, et n'expose
   que **cinq outils** sur un agent IA et un serveur MCP : `x3_query_catalog` et
   `x3_query_run` pour toutes les requêtes, `x3_object` (describe, list, read) et
   `x3_object_write` (create, modify) via un runner objet, et `x3_object_guide`.
@@ -944,8 +942,8 @@ Chaque octet renvoyé par un outil coûte des tokens, à chaque appel :
 
 **Exécuter un requêteur graphique X3 avec des bornes**
 
-- `IntellX Query Interpreter for Sage X3`, Query Source *Query Code*, code
-  `FRVEN055`, Execute activé, une borne : colonne `BPCORD`, de `FR` à `FRZZZ`.
+- `IntellX Query Interpreter for Sage X3`, Query Code `FRVEN055`, Execute
+  activé, une borne : colonne `BPCORD`, de `FR` à `FRZZZ`.
 - Le nœud lit le requêteur, construit le SQL et renvoie les lignes en une
   seule étape. Désactivez Execute pour voir le SQL et la structure, et passez
   le `sql` à un nœud `SQL Select` si vous voulez le retoucher à la main.
@@ -995,8 +993,8 @@ L'historique complet est dans [CHANGELOG.md](CHANGELOG.md).
 
 - **0.6.0** — **Parameters Mode : JSON** sur les opérations SQL ; indicateur
   `truncated` sur Simplify ; caps numériques acceptés depuis une expression
-  texte ; template MCP générique avec catalogue de requêtes et sous-workflow
-  runner.
+  texte ; template MCP générique avec catalogue de requêtes et runner imbriqué,
+  tout dans un seul workflow.
 - **0.5.2** — Test de la credential en vrai POST sur l'endpoint SOAP ; erreurs
   HTTP expliquées avec l'URL appelée ; `technicalInfos` désormais optionnel.
 - **0.5.1** — Simplify retrouve les noms de colonnes d'une requête qui

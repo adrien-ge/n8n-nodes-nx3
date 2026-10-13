@@ -645,11 +645,8 @@ Anything the node cannot translate (an X3 global variable such as `GUSER`, a
 
 **Parameters**
 
-- **Query Source** — *Query Code* (default) reads the `ALT` record from Sage
-  X3. *Incoming Item* takes the definition from the incoming item, as produced
-  by `Read Sage X3 Object` on `ALT` (it looks for `data.ALT1.CLBFL`, the bare
-  `ALT1.CLBFL`, or a `CLBFL` string). *Manual* takes the XML and the criteria
-  as fields.
+- **Query Code** — the code of the graphical query, as shown in the X3 query
+  tool (`FRVEN055`). The node reads the `ALT` record itself.
 - **Execute** — on by default: the SQL is run on Sage X3 and the rows come
   back. Off: the node returns the SQL and the query structure only.
 - **Bounds** — the X3 bounds screen: one row per column with a *From* and a
@@ -810,7 +807,8 @@ template on n8n.io is a complete agent + MCP setup built on this node.
   Query Parameter. The model cannot write SQL, values are escaped by the node,
   and unfilled filters disappear on their own. **Prefer this one.**
 - **The queries live in a catalogue, one runner executes them** — a
-  sub-workflow receives a query name and a filters object, looks the query up
+  branch of the same workflow, re-entered through an Execute Workflow Trigger,
+  receives a query name and a filters object, looks the query up
   in a JSON catalogue, validates the filters, and calls one SQL Select node in
   **Parameters Mode: JSON**. The agent and the MCP clients see two tools,
   `x3_query_catalog` and `x3_query_run`, whatever the size of the catalogue.
@@ -876,7 +874,7 @@ Every byte of a tool result is paid for in tokens, on every call:
 
 - The template in [`templates/sage-x3-sql-mcp/`](templates/sage-x3-sql-mcp/README.md)
   stores its queries and WHERE filters in a JSON catalogue, runs them all through
-  one runner sub-workflow in **Parameters Mode: JSON**, and exposes only **five
+  one runner nested in the same workflow in **Parameters Mode: JSON**, and exposes only **five
   tools** on an AI Agent and an MCP Server: `x3_query_catalog` and
   `x3_query_run` for every query, `x3_object` (describe, list, read) and
   `x3_object_write` (create, modify) through an object runner, and
@@ -898,8 +896,8 @@ Every byte of a tool result is paid for in tokens, on every call:
 
 **Run an X3 graphical query (Requêteur) with bounds**
 
-- `IntellX Query Interpreter for Sage X3`, Query Source *Query Code*, code
-  `FRVEN055`, Execute on, one Bound: column `BPCORD`, from `FR`, to `FRZZZ`.
+- `IntellX Query Interpreter for Sage X3`, Query Code `FRVEN055`, Execute
+  on, one Bound: column `BPCORD`, from `FR`, to `FRZZZ`.
 - The node reads the query, builds the SQL and returns the rows in one step.
   Turn Execute off to see the SQL and the structure instead, and feed the
   `sql` to a `SQL Select` node if you want to edit it by hand first.
@@ -948,7 +946,7 @@ The full history is in [CHANGELOG.md](CHANGELOG.md).
 
 - **0.6.0** — **Parameters Mode: JSON** on SQL operations; `truncated` flag on
   Simplify; numeric caps accepted from string expressions; generic MCP template
-  with a query catalogue and a runner sub-workflow.
+  with a query catalogue and a nested runner, everything in one workflow.
 - **0.5.2** — Credential test does a real POST on the SOAP endpoint; HTTP
   failures explained with the URL called; `technicalInfos` now opt-in.
 - **0.5.1** — Simplify recovers column names on a query that opens with a

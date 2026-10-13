@@ -29,9 +29,7 @@ This file is written by hand. `auto-changelog` is redirected to
   functions); what cannot be translated is left as-is and reported in
   `warnings`. With Execute off, every bounded column can become a pair of
   optional `[[AND col >= {{x_from}}]]` / `[[AND col <= {{x_to}}]]` clauses
-  with a typed parameter list, ready for `SQL Select`. The definition may
-  also come from the incoming item (output of `Read Sage X3 Object` on `ALT`)
-  or be pasted by hand.
+  with a typed parameter list, ready for `SQL Select`.
 - The SOAP plumbing shared by both nodes (call context, envelope, response
   parsing, SQL parameters, Simplify output, error messages) now lives in
   `nodes/Nx3Soap/x3Soap.ts`; the main node's behaviour is unchanged.
@@ -48,7 +46,7 @@ This file is written by hand. `auto-changelog` is redirected to
   workflow or an AI Agent tell a complete result from a slice.
 - `templates/sage-x3-sql-mcp/`: a generic AI Agent + MCP server template where
   the SQL queries and their WHERE filters live in a JSON catalogue, executed by
-  a single runner sub-workflow, and only five tools are exposed:
+  a runner nested in the same workflow, and only five tools are exposed:
   `x3_query_catalog`, `x3_query_run`, `x3_object` (describe, list, read),
   `x3_object_write` (create, modify) and `x3_object_guide`. A build script
   generates the workflows from the catalogue.

@@ -1,0 +1,457 @@
+{
+  "name": "X3 SQL Runner tests",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Runner tests\n\nPOST to this webhook with `{}` to run the 25 default cases of `test/cases.json` against the nested runners of *Query Sage X3 - generic agent and MCP server*, or with `{ \"cases\": [...] }` for your own. A case is `{ name, target: \"sql\" | \"object\", input: {...}, expect: { ok, error, count, rows, min_rows, column0, truncated, max_rows, params_used, all_rows, some_row } }`. The answer is `{ passed, failed, results: [...] }`. The default cases are read-only against Sage X3.",
+        "height": 260,
+        "width": 1500,
+        "color": 1
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -100,
+        -300
+      ],
+      "id": "1b5415e8-a12f-4155-825d-3e2fcab45125",
+      "name": "Note - Runner tests"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "x3-runner-tests",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "d61c8e5c-679c-4fba-8ca9-6e63c8b7b9a9",
+      "name": "Receive the test request",
+      "webhookId": "667d8bb4-0493-41f1-8f3b-a8d4f4ada5b6"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const DEFAULT_CASES = [{\"name\":\"catalog lists all queries\",\"input\":{\"action\":\"catalog\"},\"expect\":{\"ok\":true,\"count\":16}},{\"name\":\"catalog filtered by group\",\"input\":{\"action\":\"catalog\",\"params\":{\"group\":\"stock\"}},\"expect\":{\"ok\":true,\"count\":4}},{\"name\":\"customer search by category\",\"input\":{\"action\":\"run\",\"query\":\"x3_customer_search\",\"params\":{\"category\":\"FR\"}},\"expect\":{\"ok\":true,\"min_rows\":1,\"column0\":\"CUSTOMER_CODE\"}},{\"name\":\"item search with quoted wildcard value\",\"input\":{\"action\":\"run\",\"query\":\"x3_item_search\",\"params\":{\"description\":\"'%bike%'\"}},\"expect\":{\"ok\":true,\"min_rows\":1,\"params_used\":{\"description\":\"bike\"}}},{\"name\":\"stock available for one item, all sites\",\"input\":{\"action\":\"run\",\"query\":\"x3_stock_available\",\"params\":{\"item\":\"FIN008\"}},\"expect\":{\"ok\":true,\"min_rows\":1,\"all_rows\":{\"ITEM\":\"FIN008\"}}},{\"name\":\"revenue summary by month\",\"input\":{\"action\":\"run\",\"query\":\"x3_revenue_summary\",\"params\":{\"level\":\"Month\",\"date_from\":\"2000-01-01\",\"date_to\":\"2030-12-31\"}},\"expect\":{\"ok\":true,\"min_rows\":1,\"all_rows\":{\"LEVEL\":\"Month\"}}},{\"name\":\"revenue summary without level is refused\",\"input\":{\"action\":\"run\",\"query\":\"x3_revenue_summary\",\"params\":{\"date_from\":\"2025-01-01\",\"date_to\":\"2025-12-31\"}},\"expect\":{\"ok\":false,\"error\":\"missing_required\"}},{\"name\":\"payment delay by partner\",\"input\":{\"action\":\"run\",\"query\":\"x3_payment_delay\",\"params\":{\"level\":\"Partner\",\"partner_type\":\"Customer\",\"date_from\":\"2020-01-01\",\"date_to\":\"2026-12-31\"}},\"expect\":{\"ok\":true,\"all_rows\":{\"PARTNER_TYPE\":\"Customer\"}}},{\"name\":\"unknown query\",\"input\":{\"action\":\"run\",\"query\":\"x3_nope\"},\"expect\":{\"ok\":false,\"error\":\"unknown_query\"}},{\"name\":\"unknown filter\",\"input\":{\"action\":\"run\",\"query\":\"x3_customer_search\",\"params\":{\"colour\":\"red\"}},\"expect\":{\"ok\":false,\"error\":\"unknown_filter\"}},{\"name\":\"invalid date\",\"input\":{\"action\":\"run\",\"query\":\"x3_stock_movements\",\"params\":{\"date_from\":\"01/01/2025\"}},\"expect\":{\"ok\":false,\"error\":\"invalid_value\"}},{\"name\":\"max_rows capped to hard limit\",\"input\":{\"action\":\"run\",\"query\":\"x3_customer_search\",\"max_rows\":999999},\"expect\":{\"ok\":true,\"max_rows\":2000}},{\"name\":\"truncation flagged\",\"input\":{\"action\":\"run\",\"query\":\"x3_customer_search\",\"max_rows\":1},\"expect\":{\"ok\":true,\"rows\":1,\"truncated\":true}},{\"name\":\"object search by label\",\"input\":{\"action\":\"run\",\"query\":\"x3_object_search\",\"params\":{\"label_contains\":\"order\",\"with_function_only\":true}},\"expect\":{\"ok\":true,\"min_rows\":1,\"some_row\":{\"OBJECT_CODE\":\"SOH\"}}},{\"name\":\"object search by function\",\"input\":{\"action\":\"run\",\"query\":\"x3_object_search\",\"params\":{\"function_code\":\"GESITM\"}},\"expect\":{\"ok\":true,\"rows\":1,\"some_row\":{\"OBJECT_CODE\":\"ITM\",\"MAIN_TABLE\":\"ITMMASTER\"}}},{\"name\":\"object search by module\",\"input\":{\"action\":\"run\",\"query\":\"x3_object_search\",\"params\":{\"module\":\"5\",\"with_function_only\":true}},\"expect\":{\"ok\":true,\"min_rows\":5,\"all_rows\":{\"MODULE_CODE\":5}}},{\"name\":\"supplier item code for one supplier\",\"input\":{\"action\":\"run\",\"query\":\"x3_supplier_item_code\",\"params\":{\"supplier_code\":\"FR063\"}},\"expect\":{\"ok\":true}},{\"name\":\"component impact chain on a site\",\"input\":{\"action\":\"run\",\"query\":\"x3_component_impact_chain\",\"params\":{\"site\":\"FR011\"}},\"expect\":{\"ok\":true}},{\"name\":\"object describe SOH\",\"target\":\"object\",\"input\":{\"action\":\"describe\",\"object\":\"SOH\"},\"expect\":{\"ok\":true}},{\"name\":\"object list ITM filtered\",\"target\":\"object\",\"input\":{\"action\":\"list\",\"object\":\"ITM\",\"data\":{\"list_filters\":\"[F:ITM]TSICOD = '20'\"}},\"expect\":{\"ok\":true}},{\"name\":\"object read ITM FIN008\",\"target\":\"object\",\"input\":{\"action\":\"read\",\"object\":\"ITM\",\"identifier\":\"FIN008\"},\"expect\":{\"ok\":true}},{\"name\":\"object read without identifier\",\"target\":\"object\",\"input\":{\"action\":\"read\",\"object\":\"ITM\"},\"expect\":{\"ok\":false,\"error\":\"missing_identifier\"}},{\"name\":\"object write through the read tool is refused\",\"target\":\"object\",\"input\":{\"action\":\"modify\",\"object\":\"ITM\",\"identifier\":\"FIN008\",\"data\":{\"ITM0\":{\"DES1AXX\":\"x\"}}},\"expect\":{\"ok\":false,\"error\":\"write_not_allowed\"}},{\"name\":\"object unknown action\",\"target\":\"object\",\"input\":{\"action\":\"delete\",\"object\":\"ITM\"},\"expect\":{\"ok\":false,\"error\":\"unknown_action\"}},{\"name\":\"object invalid code\",\"target\":\"object\",\"input\":{\"action\":\"describe\",\"object\":\"sales orders\"},\"expect\":{\"ok\":false,\"error\":\"invalid_object\"}}];\nconst body = ($input.first() && $input.first().json.body) || {};\nconst cases = Array.isArray(body.cases) && body.cases.length ? body.cases : DEFAULT_CASES;\nreturn cases.map((c, i) => ({ json: { index: i, name: c.name, target: c.target === 'object' ? 'object' : 'sql', input: c.input || {}, expect: c.expect || {} } }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        0
+      ],
+      "id": "397affed-18ad-4e90-adea-75424d54e3da",
+      "name": "Expand cases"
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.target === 'object' ? 1 : 0 }}"
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        640,
+        0
+      ],
+      "id": "7ae56142-0665-4edd-80c3-42745c458ef6",
+      "name": "Route by target"
+    },
+    {
+      "parameters": {
+        "mode": "each",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Query Sage X3 - generic agent and MCP server (select THIS workflow after importing it)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "kind": "sql",
+            "action": "={{ $json.input.action || 'run' }}",
+            "query": "={{ $json.input.query || '' }}",
+            "params": "={{ $json.input.params || {} }}",
+            "max_rows": "={{ $json.input.max_rows || 0 }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "params",
+              "displayName": "params",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "any",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "max_rows",
+              "displayName": "max_rows",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "any",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "object",
+              "displayName": "object",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "transaction",
+              "displayName": "transaction",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "identifier",
+              "displayName": "identifier",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "data",
+              "displayName": "data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "any",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "allow_write",
+              "displayName": "allow_write",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "any",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        960,
+        -120
+      ],
+      "id": "d165218d-9353-489c-ab17-0ea9f268fffe",
+      "name": "Call the SQL runner",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "each",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Query Sage X3 - generic agent and MCP server (select THIS workflow after importing it)"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "kind": "object",
+            "action": "={{ $json.input.action || '' }}",
+            "object": "={{ $json.input.object || '' }}",
+            "transaction": "={{ $json.input.transaction || '' }}",
+            "identifier": "={{ $json.input.identifier || '' }}",
+            "data": "={{ $json.input.data || {} }}",
+            "allow_write": "={{ $json.input.allow_write === true }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "query",
+              "displayName": "query",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "params",
+              "displayName": "params",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "any",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "max_rows",
+              "displayName": "max_rows",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "any",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "object",
+              "displayName": "object",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "transaction",
+              "displayName": "transaction",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "identifier",
+              "displayName": "identifier",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "data",
+              "displayName": "data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "any",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "allow_write",
+              "displayName": "allow_write",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "any",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        960,
+        120
+      ],
+      "id": "d2e9ea1f-de95-4671-b998-9632fd1c5318",
+      "name": "Call the object runner",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1280,
+        0
+      ],
+      "id": "3fba3dec-3598-4125-8370-5ee35891f84d",
+      "name": "Collect results"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const all = $('Expand cases').all().map((i) => i.json);\nconst ordered = [...all.filter((c) => c.target === 'sql'), ...all.filter((c) => c.target === 'object')];\nconst results = $input.all().map((i) => i.json);\nconst out = [];\nordered.forEach((c, k) => {\n  const r = results[k] || {};\n  const e = c.expect || {};\n  const problems = [];\n  const col = (name) => (r.columns || []).indexOf(name);\n  if ('ok' in e && r.ok !== e.ok) problems.push('ok=' + r.ok + ' expected ' + e.ok + (r.message ? ' (' + r.message + ')' : ''));\n  if ('error' in e && r.error !== e.error) problems.push('error=' + r.error + ' expected ' + e.error);\n  if ('count' in e && r.count !== e.count) problems.push('count=' + r.count + ' expected ' + e.count);\n  if ('rows' in e && r.rowCount !== e.rows) problems.push('rowCount=' + r.rowCount + ' expected ' + e.rows);\n  if ('min_rows' in e && !(r.rowCount >= e.min_rows)) problems.push('rowCount=' + r.rowCount + ' expected >= ' + e.min_rows);\n  if ('column0' in e && (r.columns || [])[0] !== e.column0) problems.push('columns[0]=' + (r.columns || [])[0]);\n  if ('truncated' in e && r.truncated !== e.truncated) problems.push('truncated=' + r.truncated);\n  if ('max_rows' in e && r.max_rows !== e.max_rows) problems.push('max_rows=' + r.max_rows);\n  if (e.params_used) for (const [k2, v] of Object.entries(e.params_used)) if ((r.params_used || {})[k2] !== v) problems.push('params_used.' + k2 + '=' + (r.params_used || {})[k2]);\n  if (e.all_rows) for (const [k2, v] of Object.entries(e.all_rows)) { const i = col(k2); if (i < 0) problems.push('no column ' + k2); else if (!(r.rows || []).every((row) => row[i] == v)) problems.push('some row has ' + k2 + ' != ' + v); }\n  if (e.some_row) { const ok = (r.rows || []).some((row) => Object.entries(e.some_row).every(([k2, v]) => row[col(k2)] == v)); if (!ok) problems.push('no row matching ' + JSON.stringify(e.some_row)); }\n  out.push({ name: c.name, target: c.target, passed: problems.length === 0, problems, rowCount: r.rowCount, error: r.error, message: r.message, warnings: r.warnings });\n});\nreturn [{ json: { passed: out.filter((o) => o.passed).length, failed: out.filter((o) => !o.passed).length, results: out } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        0
+      ],
+      "id": "615811f1-e7cc-44ab-ae5a-d986f3da9c6b",
+      "name": "Assert"
+    }
+  ],
+  "connections": {
+    "Receive the test request": {
+      "main": [
+        [
+          {
+            "node": "Expand cases",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expand cases": {
+      "main": [
+        [
+          {
+            "node": "Route by target",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by target": {
+      "main": [
+        [
+          {
+            "node": "Call the SQL runner",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call the object runner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call the SQL runner": {
+      "main": [
+        [
+          {
+            "node": "Collect results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call the object runner": {
+      "main": [
+        [
+          {
+            "node": "Collect results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Collect results": {
+      "main": [
+        [
+          {
+            "node": "Assert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
