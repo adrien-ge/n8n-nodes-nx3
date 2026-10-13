@@ -1,0 +1,362 @@
+[
+  {
+    "name": "catalog lists all queries",
+    "input": {
+      "action": "catalog"
+    },
+    "expect": {
+      "ok": true,
+      "count": 16
+    }
+  },
+  {
+    "name": "catalog filtered by group",
+    "input": {
+      "action": "catalog",
+      "params": {
+        "group": "stock"
+      }
+    },
+    "expect": {
+      "ok": true,
+      "count": 4
+    }
+  },
+  {
+    "name": "customer search by category",
+    "input": {
+      "action": "run",
+      "query": "x3_customer_search",
+      "params": {
+        "category": "FR"
+      }
+    },
+    "expect": {
+      "ok": true,
+      "min_rows": 1,
+      "column0": "CUSTOMER_CODE"
+    }
+  },
+  {
+    "name": "item search with quoted wildcard value",
+    "input": {
+      "action": "run",
+      "query": "x3_item_search",
+      "params": {
+        "description": "'%bike%'"
+      }
+    },
+    "expect": {
+      "ok": true,
+      "min_rows": 1,
+      "params_used": {
+        "description": "bike"
+      }
+    }
+  },
+  {
+    "name": "stock available for one item, all sites",
+    "input": {
+      "action": "run",
+      "query": "x3_stock_available",
+      "params": {
+        "item": "FIN008"
+      }
+    },
+    "expect": {
+      "ok": true,
+      "min_rows": 1,
+      "all_rows": {
+        "ITEM": "FIN008"
+      }
+    }
+  },
+  {
+    "name": "revenue summary by month",
+    "input": {
+      "action": "run",
+      "query": "x3_revenue_summary",
+      "params": {
+        "level": "Month",
+        "date_from": "2000-01-01",
+        "date_to": "2030-12-31"
+      }
+    },
+    "expect": {
+      "ok": true,
+      "min_rows": 1,
+      "all_rows": {
+        "LEVEL": "Month"
+      }
+    }
+  },
+  {
+    "name": "revenue summary without level is refused",
+    "input": {
+      "action": "run",
+      "query": "x3_revenue_summary",
+      "params": {
+        "date_from": "2025-01-01",
+        "date_to": "2025-12-31"
+      }
+    },
+    "expect": {
+      "ok": false,
+      "error": "missing_required"
+    }
+  },
+  {
+    "name": "payment delay by partner",
+    "input": {
+      "action": "run",
+      "query": "x3_payment_delay",
+      "params": {
+        "level": "Partner",
+        "partner_type": "Customer",
+        "date_from": "2020-01-01",
+        "date_to": "2026-12-31"
+      }
+    },
+    "expect": {
+      "ok": true,
+      "all_rows": {
+        "PARTNER_TYPE": "Customer"
+      }
+    }
+  },
+  {
+    "name": "unknown query",
+    "input": {
+      "action": "run",
+      "query": "x3_nope"
+    },
+    "expect": {
+      "ok": false,
+      "error": "unknown_query"
+    }
+  },
+  {
+    "name": "unknown filter",
+    "input": {
+      "action": "run",
+      "query": "x3_customer_search",
+      "params": {
+        "colour": "red"
+      }
+    },
+    "expect": {
+      "ok": false,
+      "error": "unknown_filter"
+    }
+  },
+  {
+    "name": "invalid date",
+    "input": {
+      "action": "run",
+      "query": "x3_stock_movements",
+      "params": {
+        "date_from": "01/01/2025"
+      }
+    },
+    "expect": {
+      "ok": false,
+      "error": "invalid_value"
+    }
+  },
+  {
+    "name": "max_rows capped to hard limit",
+    "input": {
+      "action": "run",
+      "query": "x3_customer_search",
+      "max_rows": 999999
+    },
+    "expect": {
+      "ok": true,
+      "max_rows": 2000
+    }
+  },
+  {
+    "name": "truncation flagged",
+    "input": {
+      "action": "run",
+      "query": "x3_customer_search",
+      "max_rows": 1
+    },
+    "expect": {
+      "ok": true,
+      "rows": 1,
+      "truncated": true
+    }
+  },
+  {
+    "name": "object search by label",
+    "input": {
+      "action": "run",
+      "query": "x3_object_search",
+      "params": {
+        "label_contains": "order",
+        "with_function_only": true
+      }
+    },
+    "expect": {
+      "ok": true,
+      "min_rows": 1,
+      "some_row": {
+        "OBJECT_CODE": "SOH"
+      }
+    }
+  },
+  {
+    "name": "object search by function",
+    "input": {
+      "action": "run",
+      "query": "x3_object_search",
+      "params": {
+        "function_code": "GESITM"
+      }
+    },
+    "expect": {
+      "ok": true,
+      "rows": 1,
+      "some_row": {
+        "OBJECT_CODE": "ITM",
+        "MAIN_TABLE": "ITMMASTER"
+      }
+    }
+  },
+  {
+    "name": "object search by module",
+    "input": {
+      "action": "run",
+      "query": "x3_object_search",
+      "params": {
+        "module": "5",
+        "with_function_only": true
+      }
+    },
+    "expect": {
+      "ok": true,
+      "min_rows": 5,
+      "all_rows": {
+        "MODULE_CODE": 5
+      }
+    }
+  },
+  {
+    "name": "supplier item code for one supplier",
+    "input": {
+      "action": "run",
+      "query": "x3_supplier_item_code",
+      "params": {
+        "supplier_code": "FR063"
+      }
+    },
+    "expect": {
+      "ok": true
+    }
+  },
+  {
+    "name": "component impact chain on a site",
+    "input": {
+      "action": "run",
+      "query": "x3_component_impact_chain",
+      "params": {
+        "site": "FR011"
+      }
+    },
+    "expect": {
+      "ok": true
+    }
+  },
+  {
+    "name": "object describe SOH",
+    "target": "object",
+    "input": {
+      "action": "describe",
+      "object": "SOH"
+    },
+    "expect": {
+      "ok": true
+    }
+  },
+  {
+    "name": "object list ITM filtered",
+    "target": "object",
+    "input": {
+      "action": "list",
+      "object": "ITM",
+      "data": {
+        "list_filters": "[F:ITM]TSICOD = '20'"
+      }
+    },
+    "expect": {
+      "ok": true
+    }
+  },
+  {
+    "name": "object read ITM FIN008",
+    "target": "object",
+    "input": {
+      "action": "read",
+      "object": "ITM",
+      "identifier": "FIN008"
+    },
+    "expect": {
+      "ok": true
+    }
+  },
+  {
+    "name": "object read without identifier",
+    "target": "object",
+    "input": {
+      "action": "read",
+      "object": "ITM"
+    },
+    "expect": {
+      "ok": false,
+      "error": "missing_identifier"
+    }
+  },
+  {
+    "name": "object write through the read tool is refused",
+    "target": "object",
+    "input": {
+      "action": "modify",
+      "object": "ITM",
+      "identifier": "FIN008",
+      "data": {
+        "ITM0": {
+          "DES1AXX": "x"
+        }
+      }
+    },
+    "expect": {
+      "ok": false,
+      "error": "write_not_allowed"
+    }
+  },
+  {
+    "name": "object unknown action",
+    "target": "object",
+    "input": {
+      "action": "delete",
+      "object": "ITM"
+    },
+    "expect": {
+      "ok": false,
+      "error": "unknown_action"
+    }
+  },
+  {
+    "name": "object invalid code",
+    "target": "object",
+    "input": {
+      "action": "describe",
+      "object": "sales orders"
+    },
+    "expect": {
+      "ok": false,
+      "error": "invalid_object"
+    }
+  }
+]

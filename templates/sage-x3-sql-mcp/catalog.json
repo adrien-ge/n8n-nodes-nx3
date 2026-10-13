@@ -1,0 +1,349 @@
+{
+  "$schema_note": "Source of truth for the generic Sage X3 SQL MCP. Each query has its SQL in sql/<name>.sql with /*FILTERS*/ markers; the filters below become [[ clause ]] optional blocks inserted at those markers. Run node build.mjs after any change.",
+  "settings": {
+    "lang": "ENG",
+    "hard_max_rows": 2000,
+    "default_max_rows": 400,
+    "default_max_time": 30,
+    "request_timeout_margin": 10,
+    "runner_name": "X3 SQL Runner",
+    "main_name": "Query Sage X3 - generic agent and MCP server",
+    "mcp_path": "sage-x3-mcp"
+  },
+  "groups": {
+    "reference": "Reference data: resolve a name into a code before any other query",
+    "stock": "Stock: levels by site, detail by lot and location, movements",
+    "sales": "Sales orders: ordered lines, the history",
+    "revenue": "Revenue: one aggregate to quantify, two details to explain",
+    "purchasing": "Purchasing and manufacturing: supplier references, component impact",
+    "finance": "Finance: payment behaviour",
+    "admin": "Sage X3 dictionary: find the object behind a function or a screen"
+  },
+  "queries": [
+    {
+      "name": "x3_customer_search",
+      "group": "reference",
+      "purpose": "Find customers in the Sage X3 customer master (BPCUSTOMER) and resolve a customer name into its BPCNUM_0 code.",
+      "returns": "One row per customer: CUSTOMER_CODE, CUSTOMER_NAME, CATEGORY, CURRENCY, STATUS_CODE, STATUS_LABEL (Active / Inactive, local menu 1), CREDIT_LIMIT in the customer currency.",
+      "use_instead": ["x3_revenue_summary for anything about what a customer bought or was invoiced: this query holds no sales data."],
+      "next_step": "Use CUSTOMER_CODE as customer_code on the stock, order and revenue queries.",
+      "max_rows": 200,
+      "max_time": 20,
+      "filters": [
+        { "name": "customer_code", "type": "list", "clause": "AND BPC.BPCNUM_0 IN ({{customer_code}})", "description": "One or more exact customer codes (BPCNUM_0), e.g. FR001 or FR001,FR002." },
+        { "name": "name_contains", "type": "contains", "clause": "AND UPPER(BPC.BPCNAM_0) LIKE UPPER({{name_contains}})", "description": "Fragment of the customer name, case-insensitive partial match, e.g. urban." },
+        { "name": "category", "type": "list", "clause": "AND BPC.BCGCOD_0 IN ({{category}})", "description": "One or more customer category codes (BCGCOD_0), e.g. FR or FR,PRO." },
+        { "name": "status", "type": "list", "clause": "AND BPC.BPCSTA_0 IN ({{status}})", "description": "Customer status (BPCSTA_0), numeric: 2 active, 1 inactive." }
+      ]
+    },
+    {
+      "name": "x3_item_search",
+      "group": "reference",
+      "purpose": "Find items in the item master (ITMMASTER) and resolve a description into an ITMREF_0 reference. The default item entry point: short answer, 10 columns.",
+      "returns": "ITEM, DESCRIPTION (translated through ATEXTRA, falling back to ITMDES1_0), SEARCH_KEY, CATEGORY_CODE, CATEGORY_LABEL, ITEM_STATUS_CODE, ITEM_STATUS_LABEL, STOCK_UNIT, STOCK_TOTAL_ALL_SITES, STOCK_AVAILABLE_ALL_SITES. The stock columns are an all-site order of magnitude only.",
+      "use_instead": ["x3_stock_available for stock by site.", "x3_item_detail for the full setup of an item already identified."],
+      "next_step": "Use ITEM as item on the stock, order and revenue queries.",
+      "notes": "Always pass at least one filter: the item master can hold tens of thousands of rows.",
+      "max_rows": 500,
+      "max_time": 30,
+      "filters": [
+        { "name": "item", "type": "list", "clause": "AND ITM.ITMREF_0 IN ({{item}})", "description": "One or more exact item references (ITMREF_0), e.g. FIN008 or FIN008,FIN006. The most selective filter." },
+        { "name": "description", "type": "contains", "clause": "AND (UPPER(ITM.ITMDES1_0) LIKE UPPER({{description}}) OR UPPER(ISNULL(DES1.LABEL, '')) LIKE UPPER({{description}}))", "description": "Fragment of the description, case-insensitive, searched in the base language and in the translation, e.g. mountain." },
+        { "name": "search_key", "type": "contains", "clause": "AND UPPER(ITM.SEAKEY_0) LIKE UPPER({{search_key}})", "description": "Fragment of the item search key (SEAKEY_0)." },
+        { "name": "category", "type": "list", "clause": "AND ITM.TCLCOD_0 IN ({{category}})", "description": "One or more item category codes (TCLCOD_0), e.g. FINIS, SFINI, BMSOL, RAWMA." },
+        { "name": "item_status", "type": "list", "clause": "AND ITM.ITMSTA_0 IN ({{item_status}})", "description": "One or more item statuses (ITMSTA_0, local menu 246), e.g. 1 for active." },
+        { "name": "stat_group1", "type": "list", "clause": "AND ITM.TSICOD_0 IN ({{stat_group1}})", "description": "Statistical group 1 codes (TSICOD_0), e.g. 20." },
+        { "name": "stat_group2", "type": "list", "clause": "AND ITM.TSICOD_1 IN ({{stat_group2}})", "description": "Statistical group 2 codes (TSICOD_1), e.g. 21." },
+        { "name": "sold", "type": "number", "clause": "AND ITM.SALFLG_0 = {{sold}}", "description": "Sold item flag (SALFLG_0): 2 yes, 1 no." },
+        { "name": "purchased", "type": "number", "clause": "AND ITM.PURFLG_0 = {{purchased}}", "description": "Purchased item flag (PURFLG_0): 2 yes, 1 no." },
+        { "name": "manufactured", "type": "number", "clause": "AND ITM.MFGFLG_0 = {{manufactured}}", "description": "Manufactured item flag (MFGFLG_0): 2 yes, 1 no." },
+        { "name": "stock_unit", "type": "list", "clause": "AND ITM.STU_0 IN ({{stock_unit}})", "description": "Stock units (STU_0), e.g. UN, KG." },
+        { "name": "buyer", "type": "list", "clause": "AND ITM.BUY_0 IN ({{buyer}})", "description": "Buyer codes (BUY_0)." },
+        { "name": "planner", "type": "list", "clause": "AND ITM.PLANNER_0 IN ({{planner}})", "description": "Planner codes (PLANNER_0)." },
+        { "name": "with_stock", "type": "boolean", "clause": "AND {{with_stock}} = 1 AND ISNULL(STK.STOCK_TOTAL_A, 0) <> 0", "description": "true to keep only items holding stock on at least one site." }
+      ]
+    },
+    {
+      "name": "x3_customer_product",
+      "group": "reference",
+      "purpose": "Translate between the Sage X3 item reference and the customer's own item reference (ITMBPC), when a customer quotes a code that does not exist in the item master, or to list what a customer references.",
+      "returns": "One row per item x customer: CUSTOMER_CODE, CUSTOMER_NAME, CUSTOMER_CATEGORY, CUSTOMER_STATUS_LABEL, ITEM, X3_DESCRIPTION, CUSTOMER_REF, CUSTOMER_DESCRIPTION, ACTIVE_LABEL, ITEM_STATUS_LABEL, ITEM_CATEGORY_LABEL, the customer-specific units and packing (CUSTOMER_SALES_UNIT, SAL_STK_COEF, STOCK_UNIT, PACKING, PACKING_CAPACITY, PACK_UNIT_1/2, PACK_COEF_1/2, CUSTOMER_SHELF_LIFE_COEF), STOCK_AVAILABLE_ALL_SITES, CREATED_ON, UPDATED_ON, UPDATED_BY.",
+      "use_instead": ["x3_supplier_item_code for the supplier-side mirror."],
+      "notes": "Many folders leave ENAFLG_0 at 0 (not filled in): filtering active=true then returns nothing.",
+      "max_rows": 300,
+      "max_time": 30,
+      "filters": [
+        { "name": "item", "type": "list", "clause": "AND ITU.ITMREF_0 IN ({{item}})", "description": "One or more Sage X3 item references (ITMREF_0)." },
+        { "name": "customer_code", "type": "list", "clause": "AND ITU.BPCNUM_0 IN ({{customer_code}})", "description": "One or more customer codes (BPCNUM_0)." },
+        { "name": "customer_name", "type": "contains", "clause": "AND UPPER(BPC.BPCNAM_0) LIKE UPPER({{customer_name}})", "description": "Fragment of the customer name." },
+        { "name": "customer_ref", "type": "list", "clause": "AND ITU.ITMREFBPC_0 IN ({{customer_ref}})", "description": "One or more of the customer's own item references (ITMREFBPC_0), exact." },
+        { "name": "customer_ref_contains", "type": "contains", "clause": "AND UPPER(ITU.ITMREFBPC_0) LIKE UPPER({{customer_ref_contains}})", "description": "Fragment of the customer's item reference." },
+        { "name": "customer_description", "type": "contains", "clause": "AND UPPER(ITU.ITMDESBPC_0) LIKE UPPER({{customer_description}})", "description": "Fragment of the description used by the customer (ITMDESBPC_0)." },
+        { "name": "description", "type": "contains", "clause": "AND (UPPER(ITM.ITMDES1_0) LIKE UPPER({{description}}) OR UPPER(ISNULL(DES1.LABEL, '')) LIKE UPPER({{description}}))", "description": "Fragment of the Sage X3 item description." },
+        { "name": "category", "type": "list", "clause": "AND ITM.TCLCOD_0 IN ({{category}})", "description": "Item category codes (TCLCOD_0)." },
+        { "name": "active", "type": "number", "clause": "AND ITU.ENAFLG_0 = {{active}}", "description": "Cross-reference active flag (ENAFLG_0): 2 yes, 1 no. Leave empty by default." },
+        { "name": "item_status", "type": "list", "clause": "AND ITM.ITMSTA_0 IN ({{item_status}})", "description": "Item statuses (ITMSTA_0, local menu 246)." }
+      ]
+    },
+    {
+      "name": "x3_item_detail",
+      "group": "reference",
+      "purpose": "Read the full setup of one or a few identified items (ITMMASTER): management mode, stock, lot, serial, traceability, expiry, flags, statistical groups, units and coefficients, barcode, GTIN, customs code, buyer, planner, lead time.",
+      "returns": "About sixty columns per item; every coded field comes as a _CODE and a _LABEL pair, plus STOCK_TOTAL_A_ALL_SITES, STOCK_AVAILABLE_ALL_SITES, SITES_WITH_STOCK, CREATED_ON, UPDATED_ON, UPDATED_BY.",
+      "use_instead": ["x3_item_search to find a reference from a description: far lighter. Never browse a set of items with this query."],
+      "max_rows": 50,
+      "max_time": 30,
+      "filters": [
+        { "name": "item", "type": "list", "clause": "AND ITM.ITMREF_0 IN ({{item}})", "description": "One or more exact item references (ITMREF_0). Prefer it." },
+        { "name": "description", "type": "contains", "clause": "AND (UPPER(ITM.ITMDES1_0) LIKE UPPER({{description}}) OR UPPER(ISNULL(DES1.LABEL, '')) LIKE UPPER({{description}}))", "description": "Fragment of the description, case-insensitive." }
+      ]
+    },
+    {
+      "name": "x3_stock_available",
+      "group": "stock",
+      "purpose": "Answer how much of an item is left, by site, from the ITMMVT totals. One row per item x site.",
+      "returns": "SITE, ITEM, DESCRIPTION, STOCK_UNIT, CATEGORY_LABEL, ITEM_STATUS_LABEL, STOCK_MANAGEMENT_LABEL, STOCK_ACCEPTED_A, STOCK_QUALITY_Q, STOCK_REJECTED_R, STOCK_TOTAL, ALLOCATED_DETAILED, ALLOCATED_GLOBAL, SHORTAGE_GLOBAL, EXPECTED_SALES_ORDERS, EXPECTED_REPLENISHMENT, IN_TRANSIT, PENDING_ISSUES, STOCK_AVAILABLE, REORDER_POINT, SAFETY_STOCK, STOCK_MAX, BELOW_REORDER_POINT, AVERAGE_COST, STOCK_VALUE_A, LAST_RECEIPT, LAST_ISSUE, LAST_COUNT.",
+      "use_instead": ["x3_stock_detail for lots, locations and quality control."],
+      "notes": "The figure to quote is STOCK_AVAILABLE (accepted stock minus detailed and global allocations), never STOCK_TOTAL.",
+      "max_rows": 400,
+      "max_time": 30,
+      "filters": [
+        { "name": "item", "type": "list", "clause": "AND ITV.ITMREF_0 IN ({{item}})", "description": "One or more item references (ITMREF_0)." },
+        { "name": "description", "type": "contains", "clause": "AND (UPPER(ITM.ITMDES1_0) LIKE UPPER({{description}}) OR UPPER(ISNULL(DES1.LABEL, '')) LIKE UPPER({{description}}))", "description": "Fragment of the item description." },
+        { "name": "site", "type": "list", "clause": "AND ITV.STOFCY_0 IN ({{site}})", "description": "One or more stock site codes, e.g. FR011." },
+        { "name": "category", "type": "list", "clause": "AND ITM.TCLCOD_0 IN ({{category}})", "description": "Item category codes (TCLCOD_0)." },
+        { "name": "item_status", "type": "list", "clause": "AND ITM.ITMSTA_0 IN ({{item_status}})", "description": "Item statuses (ITMSTA_0, local menu 246)." },
+        { "name": "only_in_stock", "type": "boolean", "clause": "AND {{only_in_stock}} = 1 AND ISNULL(ITV.PHYSTO_0, 0) <> 0", "description": "true to keep only rows with non-zero physical stock." },
+        { "name": "below_reorder_point", "type": "boolean", "clause": "AND {{below_reorder_point}} = 1 AND ISNULL(ITF.REOTSD_0, 0) > 0 AND (ISNULL(ITV.PHYSTO_0, 0) - ISNULL(ITV.PHYALL_0, 0) - ISNULL(ITV.GLOALL_0, 0)) < ITF.REOTSD_0", "description": "true to keep only items whose available stock is below their reorder point." }
+      ]
+    },
+    {
+      "name": "x3_stock_detail",
+      "group": "stock",
+      "purpose": "Answer where the stock is: by lot, sublot, serial number, location, warehouse, container, owner and status (STOCK table).",
+      "returns": "SITE, ITEM, DESCRIPTION, LOT, SUBLOT, SUPPLIER_LOT, SERIAL_NUMBER, LOCATION, LOCATION_TYPE, WAREHOUSE, CONTAINER, OWNER, STOCK_STATUS_CODE, STOCK_STATUS_LABEL (Accepted A / Quality control Q / Rejected R), STOCK_QTY, STOCK_UNIT, ACTIVE_QTY, PACKING_QTY, PACKING_UNIT, ALLOCATED_QTY, WIP_QTY, AVAILABLE_QTY, LAST_RECEIPT, LAST_ISSUE, LAST_COUNT, COUNT_IN_PROGRESS_LABEL.",
+      "use_instead": ["x3_stock_available for a simple total by site: far faster."],
+      "max_rows": 400,
+      "max_time": 30,
+      "filters": [
+        { "name": "item", "type": "list", "clause": "AND STO.ITMREF_0 IN ({{item}})", "description": "One or more item references (ITMREF_0)." },
+        { "name": "description", "type": "contains", "clause": "AND (UPPER(ITM.ITMDES1_0) LIKE UPPER({{description}}) OR UPPER(ISNULL(DES1.LABEL, '')) LIKE UPPER({{description}}))", "description": "Fragment of the item description." },
+        { "name": "site", "type": "list", "clause": "AND STO.STOFCY_0 IN ({{site}})", "description": "Stock site codes." },
+        { "name": "location", "type": "list", "clause": "AND STO.LOC_0 IN ({{location}})", "description": "Location codes (LOC_0)." },
+        { "name": "lot", "type": "list", "clause": "AND STO.LOT_0 IN ({{lot}})", "description": "Lot numbers (LOT_0)." },
+        { "name": "sublot", "type": "list", "clause": "AND STO.SLO_0 IN ({{sublot}})", "description": "Sublot numbers (SLO_0)." },
+        { "name": "serial_number", "type": "list", "clause": "AND STO.SERNUM_0 IN ({{serial_number}})", "description": "Serial numbers (SERNUM_0)." },
+        { "name": "stock_status", "type": "list", "clause": "AND STO.STA_0 IN ({{stock_status}})", "description": "Stock status: A accepted, Q quality control, R rejected." },
+        { "name": "owner", "type": "list", "clause": "AND STO.OWNER_0 IN ({{owner}})", "description": "Stock owner codes (OWNER_0)." },
+        { "name": "only_available", "type": "boolean", "clause": "AND {{only_available}} = 1 AND (STO.QTYSTU_0 - ISNULL(STO.CUMALLQTY_0, 0)) > 0", "description": "true to keep only rows with a strictly positive available quantity." }
+      ]
+    },
+    {
+      "name": "x3_stock_movements",
+      "group": "stock",
+      "purpose": "List stock movements line by line from the STOJOU journal: receipts, issues, transfers, adjustments, with signed quantities.",
+      "returns": "SITE, DOCUMENT_NUMBER, LINE_NUMBER, ITEM, DESCRIPTION, MOVEMENT_DATE, ACCOUNTING_DATE, CREATED_ON, MOVEMENT_TYPE_LABEL, DOCUMENT_TYPE_LABEL, SOURCE_DOCUMENT_TYPE_LABEL, SOURCE_DOCUMENT_NUMBER, MOVEMENT_FAMILY_LABEL, DIRECTION (Inbound / Outbound / Neutral), STOCK_QTY (signed), STOCK_UNIT, PACKING_QTY, PACKING_UNIT, ACTIVE_QTY, POTENCY, LOT, SUBLOT, LOCATION, WAREHOUSE, SERIAL_NUMBER, STOCK_STATUS_LABEL, VALUATION_PRICE, MOVEMENT_VALUE, COST_ORIGIN_LABEL, ADJUSTED_LABEL, BP_CODE, BP_NAME, USER_CODE, MOVEMENT_DESCRIPTION. Sorted by descending movement date.",
+      "use_instead": ["x3_stock_movements_summary as soon as the question is about a volume (how much went out in June): it aggregates on the database side."],
+      "notes": "Always bound date_from and date_to.",
+      "max_rows": 400,
+      "max_time": 30,
+      "filters": [
+        { "name": "item", "type": "list", "clause": "AND STJ.ITMREF_0 IN ({{item}})", "description": "Item references (ITMREF_0)." },
+        { "name": "description", "type": "contains", "clause": "AND (UPPER(ITM.ITMDES1_0) LIKE UPPER({{description}}) OR UPPER(ISNULL(DES1.LABEL, '')) LIKE UPPER({{description}}))", "description": "Fragment of the item description." },
+        { "name": "site", "type": "list", "clause": "AND STJ.STOFCY_0 IN ({{site}})", "description": "Stock site codes." },
+        { "name": "location", "type": "list", "clause": "AND STJ.LOC_0 IN ({{location}})", "description": "Location codes (LOC_0)." },
+        { "name": "lot", "type": "list", "clause": "AND STJ.LOT_0 IN ({{lot}})", "description": "Lot numbers (LOT_0)." },
+        { "name": "document_number", "type": "list", "clause": "AND STJ.VCRNUM_0 IN ({{document_number}})", "description": "Movement document numbers (VCRNUM_0)." },
+        { "name": "movement_type", "type": "list", "clause": "AND STJ.TRSTYP_0 IN ({{movement_type}})", "description": "Numeric movement type codes (TRSTYP_0, local menu 704)." },
+        { "name": "document_type", "type": "list", "clause": "AND STJ.VCRTYP_0 IN ({{document_type}})", "description": "Numeric document type codes (VCRTYP_0, local menu 701)." },
+        { "name": "movement_family", "type": "list", "clause": "AND STJ.TRSFAM_0 IN ({{movement_family}})", "description": "Transaction family codes (TRSFAM_0, miscellaneous table 9)." },
+        { "name": "business_partner", "type": "list", "clause": "AND STJ.BPRNUM_0 IN ({{business_partner}})", "description": "Business partner codes (BPRNUM_0)." },
+        { "name": "user_code", "type": "list", "clause": "AND STJ.CREUSR_0 IN ({{user_code}})", "description": "User codes of the movement creator (CREUSR_0)." },
+        { "name": "stock_status", "type": "list", "clause": "AND STJ.STA_0 IN ({{stock_status}})", "description": "Stock status: A, Q or R." },
+        { "name": "direction", "type": "number", "clause": "AND SIGN(STJ.QTYSTU_0) = {{direction}}", "description": "1 for receipts, -1 for issues." },
+        { "name": "date_from", "type": "date", "clause": "AND STJ.IPTDAT_0 >= {{date_from}}", "description": "Minimum movement date, included, YYYY-MM-DD." },
+        { "name": "date_to", "type": "date", "clause": "AND STJ.IPTDAT_0 <= {{date_to}}", "description": "Maximum movement date, included, YYYY-MM-DD." }
+      ]
+    },
+    {
+      "name": "x3_stock_movements_summary",
+      "group": "stock",
+      "purpose": "Total the stock movements by site, item and movement type over a period, on the database side.",
+      "returns": "SITE, ITEM, DESCRIPTION, MOVEMENT_TYPE_CODE, MOVEMENT_TYPE_LABEL, STOCK_UNIT, MOVEMENT_COUNT, INBOUND_QTY, OUTBOUND_QTY (negative), NET_QTY, TOTAL_VALUE, FIRST_MOVEMENT, LAST_MOVEMENT.",
+      "use_instead": ["x3_stock_movements only when the line-by-line detail is asked for."],
+      "notes": "Always bound date_from and date_to.",
+      "max_rows": 500,
+      "max_time": 30,
+      "filters": [
+        { "name": "item", "type": "list", "clause": "AND STJ.ITMREF_0 IN ({{item}})", "description": "Item references (ITMREF_0)." },
+        { "name": "site", "type": "list", "clause": "AND STJ.STOFCY_0 IN ({{site}})", "description": "Stock site codes." },
+        { "name": "movement_type", "type": "list", "clause": "AND STJ.TRSTYP_0 IN ({{movement_type}})", "description": "Numeric movement type codes (TRSTYP_0, local menu 704)." },
+        { "name": "document_type", "type": "list", "clause": "AND STJ.VCRTYP_0 IN ({{document_type}})", "description": "Numeric document type codes (VCRTYP_0, local menu 701)." },
+        { "name": "stock_status", "type": "list", "clause": "AND STJ.STA_0 IN ({{stock_status}})", "description": "Stock status: A, Q or R." },
+        { "name": "date_from", "type": "date", "clause": "AND STJ.IPTDAT_0 >= {{date_from}}", "description": "Minimum movement date, included, YYYY-MM-DD." },
+        { "name": "date_to", "type": "date", "clause": "AND STJ.IPTDAT_0 <= {{date_to}}", "description": "Maximum movement date, included, YYYY-MM-DD." }
+      ]
+    },
+    {
+      "name": "x3_sales_order_lines",
+      "group": "sales",
+      "purpose": "List sales order lines (SORDER + SORDERP + SORDERQ): which orders, which items, which ordered quantities. This is the history of what was ordered.",
+      "returns": "ORDER_NUMBER, ORDER_TYPE (raw code such as SON or WEB, no meaning to invent), CUSTOMER_CODE, CUSTOMER_NAME, SALES_SITE, ORDER_DATE, CURRENCY, STATUS_CODE, STATUS_LABEL (local menu 415), LINE_NUMBER, ITEM, DESCRIPTION, CUSTOMER_REF, ORDERED_QTY, NET_PRICE, LINE_AMOUNT_EXCL_TAX. Sorted by descending order date.",
+      "use_instead": ["x3_revenue_ordered for what is left to deliver (the order book).", "x3_revenue_summary for a total or a ranking."],
+      "notes": "Always bound date_from and date_to.",
+      "max_rows": 2000,
+      "max_time": 20,
+      "filters": [
+        { "name": "customer_code", "type": "list", "clause": "AND SOH.BPCORD_0 IN ({{customer_code}})", "description": "Customer codes (BPCNUM_0)." },
+        { "name": "order_number", "type": "list", "clause": "AND SOH.SOHNUM_0 IN ({{order_number}})", "description": "Sales order numbers (SOHNUM_0), e.g. SONFR0120099." },
+        { "name": "item", "type": "list", "clause": "AND SOP.ITMREF_0 IN ({{item}})", "description": "Item references (ITMREF_0)." },
+        { "name": "date_from", "type": "date", "clause": "AND SOH.ORDDAT_0 >= {{date_from}}", "description": "Minimum order date, included, YYYY-MM-DD." },
+        { "name": "date_to", "type": "date", "clause": "AND SOH.ORDDAT_0 <= {{date_to}}", "description": "Maximum order date, included, YYYY-MM-DD." },
+        { "name": "sales_site", "type": "list", "clause": "AND SOH.SALFCY_0 IN ({{sales_site}})", "description": "Sales site codes (SALFCY_0), e.g. FR012." },
+        { "name": "order_type", "type": "list", "clause": "AND SOH.SOHTYP_0 IN ({{order_type}})", "description": "Order types (SOHTYP_0), e.g. SON or SON,WEB." }
+      ]
+    },
+    {
+      "name": "x3_revenue_summary",
+      "group": "revenue",
+      "purpose": "THE revenue entry point: totals aggregated on the database side and converted to euros, over both horizons, billed (SINVOICE) and ordered not yet invoiced (SORDERQ). Answers any total, ranking, trend or period comparison on its own.",
+      "returns": "LEVEL, REVENUE_TYPE (Billed / Ordered), YEAR, MONTH, CUSTOMER_CODE, CUSTOMER_NAME, ITEM, DESCRIPTION, DOCUMENT_COUNT, LINE_COUNT, LINES_WITHOUT_RATE, QUANTITY, REVENUE_EUR. Columns outside the requested level are NULL, that is expected.",
+      "use_instead": ["x3_revenue_billed or x3_revenue_ordered afterwards, only to explain a figure line by line."],
+      "notes": "LINES_WITHOUT_RATE counts the lines whose exchange rate to the euro could not be found: their amount is excluded from REVENUE_EUR and the total is then incomplete, say so. Billed and ordered are two horizons, never a cumulative figure. Credit memos and credit notes count negative, proformas zero. Always bound date_from and date_to.",
+      "max_rows": 1000,
+      "max_time": 60,
+      "filters": [
+        { "name": "level", "type": "list", "required": true, "clause": "AND AGG.LEVEL IN ({{level}})", "slot": "level", "description": "Granularity, a single value: Total, Month (trend), Customer (customer ranking), Item (item ranking) or CustomerItem (what a customer buys item by item)." },
+        { "name": "revenue_type", "type": "list", "clause": "AND CA.REVENUE_TYPE IN ({{revenue_type}})", "description": "Horizon: Billed or Ordered. Both, comma separated, to compare them." },
+        { "name": "customer_code", "type": "list", "clause": "AND CA.CUSTOMER_CODE IN ({{customer_code}})", "description": "Customer codes (BPCNUM_0)." },
+        { "name": "customer_name", "type": "contains", "clause": "AND UPPER(CA.CUSTOMER_NAME) LIKE UPPER({{customer_name}})", "description": "Fragment of the customer name." },
+        { "name": "item", "type": "list", "clause": "AND CA.ITEM IN ({{item}})", "description": "Item references (ITMREF_0)." },
+        { "name": "category", "type": "list", "clause": "AND CA.X3_CATEGORY IN ({{category}})", "description": "Item category codes (TCLCOD_0)." },
+        { "name": "site", "type": "list", "clause": "AND CA.SITE IN ({{site}})", "description": "Site codes: sales site for billed, shipment site for ordered." },
+        { "name": "currency", "type": "list", "clause": "AND CA.CURRENCY IN ({{currency}})", "description": "Currencies of the source documents; amounts stay converted to euros." },
+        { "name": "date_from", "type": "date", "clauses": { "billed": "AND SIE.ACCDAT_0 >= {{date_from}}", "ordered": "AND SOQ.SHIDAT_0 >= {{date_from}}" }, "description": "Minimum date, included, YYYY-MM-DD: accounting date for billed, planned shipment date for ordered. Always fill it in." },
+        { "name": "date_to", "type": "date", "clauses": { "billed": "AND SIE.ACCDAT_0 <= {{date_to}}", "ordered": "AND SOQ.SHIDAT_0 <= {{date_to}}" }, "description": "Maximum date, included, YYYY-MM-DD. Always fill it in." }
+      ]
+    },
+    {
+      "name": "x3_revenue_billed",
+      "group": "revenue",
+      "purpose": "Explain billed revenue line by line (SINVOICED + SINVOICE): the actuals, with document type, shipment site, sales rep, statistical group, document-currency and euro amounts.",
+      "returns": "REVENUE_TYPE, DOCUMENT, LINE, REF_DATE (accounting date), YEAR, MONTH, CUSTOMER_CODE, CUSTOMER_NAME, SALES_REP, ITEM, DESCRIPTION, X3_CATEGORY, X3_CATEGORY_LABEL, STAT_GROUP1, SITE, SHIPMENT_SITE, QUANTITY, UNIT, CURRENCY, AMOUNT_CURRENCY, EUR_RATE, AMOUNT_EUR, STATUS_CODE (folder document type), STATUS_LABEL (Invoice 1, Credit memo 2, Debit note 3, Credit note 4, Proforma 5). Sorted by descending accounting date.",
+      "use_instead": ["x3_revenue_summary first for any total, ranking or trend."],
+      "notes": "Sign follows TABSIVTYP.INVTYP_0: credit memos and credit notes negative, proformas zero. An EUR_RATE of 0 means no exchange rate was found: the line cannot be converted, say so rather than counting it as zero. Always bound date_from and date_to.",
+      "max_rows": 1000,
+      "max_time": 30,
+      "filters": [
+        { "name": "customer_code", "type": "list", "clause": "AND SID.BPCINV_0 IN ({{customer_code}})", "description": "Invoiced customer codes (BPCINV_0)." },
+        { "name": "customer_name", "type": "contains", "clause": "AND UPPER(BPR.BPRNAM_0) LIKE UPPER({{customer_name}})", "description": "Fragment of the customer name." },
+        { "name": "item", "type": "list", "clause": "AND SID.ITMREF_0 IN ({{item}})", "description": "Item references (ITMREF_0)." },
+        { "name": "category", "type": "list", "clause": "AND ITM.TCLCOD_0 IN ({{category}})", "description": "Item category codes (TCLCOD_0)." },
+        { "name": "sales_rep", "type": "list", "clause": "AND SID.REP1_0 IN ({{sales_rep}})", "description": "Sales representative codes (REP1_0)." },
+        { "name": "site", "type": "list", "clause": "AND SID.SALFCY_0 IN ({{site}})", "description": "Sales site codes." },
+        { "name": "currency", "type": "list", "clause": "AND SIE.CUR_0 IN ({{currency}})", "description": "Document currencies, e.g. EUR or EUR,USD." },
+        { "name": "invoice_type", "type": "list", "clause": "AND TIV.INVTYP_0 IN ({{invoice_type}})", "description": "Normalised document type (TABSIVTYP.INVTYP_0): 1 invoice, 2 credit memo, 3 debit note, 4 credit note, 5 proforma." },
+        { "name": "date_from", "type": "date", "clause": "AND SIE.ACCDAT_0 >= {{date_from}}", "description": "Minimum accounting date, included, YYYY-MM-DD." },
+        { "name": "date_to", "type": "date", "clause": "AND SIE.ACCDAT_0 <= {{date_to}}", "description": "Maximum accounting date, included, YYYY-MM-DD." }
+      ]
+    },
+    {
+      "name": "x3_revenue_ordered",
+      "group": "revenue",
+      "purpose": "Explain the order book line by line: ordered and not yet invoiced (SORDERQ + SORDERP + SORDER). Quantity is ordered minus already invoiced.",
+      "returns": "Same columns as x3_revenue_billed with REF_DATE = planned shipment date and SITE = shipment site, plus STATUS_LABEL (line status, local menu 279), ORDER_STATUS_LABEL (415), ORDER_CATEGORY_LABEL (412), INVOICED_LABEL, ORDERED_QTY, DELIVERED_QTY, INVOICED_QTY, ALLOCATED_QTY, SHORTAGE_QTY, NET_PRICE.",
+      "use_instead": ["x3_revenue_summary first for any total or ranking.", "x3_sales_order_lines for what was ordered historically rather than what is left."],
+      "notes": "Never add this revenue to billed revenue: two horizons, not a cumulative figure. Always bound date_from and date_to.",
+      "max_rows": 1000,
+      "max_time": 30,
+      "filters": [
+        { "name": "customer_code", "type": "list", "clause": "AND SOQ.BPCORD_0 IN ({{customer_code}})", "description": "Customer codes (BPCORD_0)." },
+        { "name": "customer_name", "type": "contains", "clause": "AND UPPER(BPC.BPCNAM_0) LIKE UPPER({{customer_name}})", "description": "Fragment of the customer name." },
+        { "name": "item", "type": "list", "clause": "AND SOQ.ITMREF_0 IN ({{item}})", "description": "Item references (ITMREF_0)." },
+        { "name": "category", "type": "list", "clause": "AND ITM.TCLCOD_0 IN ({{category}})", "description": "Item category codes (TCLCOD_0)." },
+        { "name": "sales_rep", "type": "list", "clause": "AND SOP.REP1_0 IN ({{sales_rep}})", "description": "Sales representative codes (REP1_0)." },
+        { "name": "site", "type": "list", "clause": "AND SOQ.STOFCY_0 IN ({{site}})", "description": "Shipment site codes (STOFCY_0)." },
+        { "name": "currency", "type": "list", "clause": "AND SOH.CUR_0 IN ({{currency}})", "description": "Order currencies." },
+        { "name": "order_number", "type": "list", "clause": "AND SOQ.SOHNUM_0 IN ({{order_number}})", "description": "Sales order numbers (SOHNUM_0)." },
+        { "name": "line_status", "type": "list", "clause": "AND SOQ.SOQSTA_0 IN ({{line_status}})", "description": "Order line statuses (SOQSTA_0, local menu 279)." },
+        { "name": "order_status", "type": "list", "clause": "AND SOH.ORDSTA_0 IN ({{order_status}})", "description": "Order statuses (ORDSTA_0, local menu 415)." },
+        { "name": "only_open_lines", "type": "boolean", "clause": "AND {{only_open_lines}} = 1 AND (SOQ.QTY_0 - ISNULL(SOQ.INVQTY_0, 0)) > 0", "description": "true to keep only lines with a strictly positive quantity left to deliver." },
+        { "name": "date_from", "type": "date", "clause": "AND SOQ.SHIDAT_0 >= {{date_from}}", "description": "Minimum planned shipment date, included, YYYY-MM-DD." },
+        { "name": "date_to", "type": "date", "clause": "AND SOQ.SHIDAT_0 <= {{date_to}}", "description": "Maximum planned shipment date, included, YYYY-MM-DD." }
+      ]
+    },
+    {
+      "name": "x3_supplier_item_code",
+      "group": "purchasing",
+      "purpose": "Translate between the Sage X3 item reference and a supplier's own reference (ITMBPS): the code to quote on a purchase order, reconcile a supplier acknowledgement or catalogue, list what a supplier references.",
+      "returns": "One row per item x supplier: SUPPLIER_CODE, SUPPLIER_NAME, ITEM, X3_DESCRIPTION, SUPPLIER_ITEM_REF, SUPPLIER_DESCRIPTION (often empty), PRIORITY, MINIMUM_PO_QTY (in purchase unit), PURCHASE_UNIT.",
+      "use_instead": ["x3_customer_product for the customer-side mirror.", "x3_item_detail for the item setup."],
+      "notes": "PRIORITY ranks the suppliers of one item: the lower the value, the higher the priority. 0 means not filled in, never top priority. Reference data only: it says nothing about what was ordered or received.",
+      "max_rows": 300,
+      "max_time": 20,
+      "filters": [
+        { "name": "supplier_code", "type": "list", "clause": "AND ITS.BPSNUM_0 IN ({{supplier_code}})", "description": "One or more exact supplier codes (BPSNUM_0), e.g. FR063." },
+        { "name": "item", "type": "list", "clause": "AND ITS.ITMREF_0 IN ({{item}})", "description": "One or more Sage X3 item references (ITMREF_0)." },
+        { "name": "supplier_item_ref", "type": "list", "clause": "AND ITS.ITMREFBPS_0 IN ({{supplier_item_ref}})", "description": "The supplier's own item references (ITMREFBPS_0), exact." },
+        { "name": "supplier_item_ref_contains", "type": "contains", "clause": "AND UPPER(ITS.ITMREFBPS_0) LIKE UPPER({{supplier_item_ref_contains}})", "description": "Fragment of the supplier's item reference." },
+        { "name": "supplier_name", "type": "contains", "clause": "AND UPPER(BPS.BPSNAM_0) LIKE UPPER({{supplier_name}})", "description": "Fragment of the supplier name." }
+      ]
+    },
+    {
+      "name": "x3_component_impact_chain",
+      "group": "purchasing",
+      "purpose": "Answer what breaks if this purchased component arrives late: the open work orders consuming it (MFGMAT + MFGHEAD), the finished item they produce (MFGITM) and the open sales order lines pulling that finished item. One row per component x work order x sales order line, the whole chain in one call.",
+      "returns": "COMPONENT, WORK_ORDER, WO_STATUS_LABEL, WO_SITE, COMPONENT_NEED_DATE, WO_START_DATE, WO_END_DATE, COMPONENT_QTY_STILL_NEEDED, COMPONENT_STOCK_SITE, COMPONENT_STOCK_AVAILABLE, FINISHED_ITEM, WO_PLANNED_QTY, WO_REMAINING_QTY, FINISHED_STOCK_SITE, FINISHED_STOCK_AVAILABLE, SALES_ORDER, SO_LINE_STATUS_LABEL, CUSTOMER_CODE, CUSTOMER_NAME, SO_CREATED_BY, SO_CREATED_BY_NAME, SO_CREATED_BY_EMAIL, SO_ORDERED_QTY, SO_DELIVERED_QTY, SO_QTY_TO_DELIVER, SO_REQUESTED_DELIVERY_DATE.",
+      "use_instead": ["x3_sales_order_lines only for the amount or the full detail of an order flagged at risk; the customer is already here."],
+      "notes": "COMPONENT_NEED_DATE is the date to compare a new expected receipt date against. COMPONENT_QTY_STILL_NEEDED is net of what is already consumed. WO_REMAINING_QTY = 0 with a non-zero component need is normal: the finished item is declared but the consumption is not yet recorded. Only firm and in-progress work orders (status 1, 2) are listed.",
+      "max_rows": 1000,
+      "max_time": 30,
+      "filters": [
+        { "name": "item", "type": "list", "clause": "AND MFM.ITMREF_0 IN ({{item}})", "description": "One or more component references (ITMREF_0)." },
+        { "name": "site", "type": "list", "clause": "AND MFM.MFGFCY_0 IN ({{site}})", "description": "Production site codes. Strongly recommended: left empty, work orders of every site come back." },
+        { "name": "work_order", "type": "list", "clause": "AND MFM.MFGNUM_0 IN ({{work_order}})", "description": "Work order numbers (MFGNUM_0)." },
+        { "name": "finished_item", "type": "list", "clause": "AND MFI.ITMREF_0 IN ({{finished_item}})", "description": "Finished item references produced by the work orders." },
+        { "name": "need_date_to", "type": "date", "clause": "AND MFM.RETDAT_0 <= {{need_date_to}}", "description": "Keep only work orders whose component need date is on or before this date, YYYY-MM-DD: typically the new expected receipt date." }
+      ]
+    },
+    {
+      "name": "x3_payment_delay",
+      "group": "finance",
+      "purpose": "Measure payment behaviour on fully settled due dates: how fast customers pay us (receivables) and how fast we pay suppliers (payables), aggregated on the database side.",
+      "returns": "LEVEL, PARTNER_TYPE, YEAR, MONTH, SITE, PARTNER_CODE, PARTNER_NAME, DUE_COUNT, AVG_PAYMENT_DAYS (payment date minus invoice date), AVG_LATE_DAYS (payment date minus due date, positive = late, negative = early), MAX_LATE_DAYS, LATE_COUNT, LATE_PCT. Columns outside the requested level are NULL.",
+      "use_instead": [],
+      "notes": "Only fully settled due dates are included (amount due minus paid = 0): the result describes past behaviour, not the open balance or aging. Year and month are those of the LAST payment date. Averages are per due date, not weighted by amount; below about 5 due dates a figure is not statistically reliable. A partner that is both customer and supplier appears under each partner_type. Always bound date_from and date_to (they apply to the payment date).",
+      "max_rows": 1000,
+      "max_time": 60,
+      "filters": [
+        { "name": "level", "type": "list", "required": true, "clause": "AND AGG.LEVEL IN ({{level}})", "slot": "level", "description": "Granularity, a single value: Total, Site, Partner, Month, SitePartner, SiteMonth, PartnerMonth or SitePartnerMonth. Month means year and month of the payment date." },
+        { "name": "partner_type", "type": "list", "required": true, "clause": "AND CA.PARTNER_TYPE IN ({{partner_type}})", "description": "Customer for receivables or Supplier for payables. One value per call: the two populations must never be added together." },
+        { "name": "date_from", "type": "date", "required": true, "clause": "AND CA.PAYMENT_DATE >= {{date_from}}", "description": "Lower bound, included, on the PAYMENT date, YYYY-MM-DD." },
+        { "name": "date_to", "type": "date", "required": true, "clause": "AND CA.PAYMENT_DATE <= {{date_to}}", "description": "Upper bound, included, on the PAYMENT date, YYYY-MM-DD." },
+        { "name": "site", "type": "list", "clause": "AND CA.SITE IN ({{site}})", "description": "Site codes of the due date (GACCDUDATE.FCY_0)." },
+        { "name": "partner_code", "type": "list", "clause": "AND CA.PARTNER_CODE IN ({{partner_code}})", "description": "Customer or supplier codes (BPR code)." },
+        { "name": "partner_name", "type": "contains", "clause": "AND UPPER(CA.PARTNER_NAME) LIKE UPPER({{partner_name}})", "description": "Fragment of the partner name." }
+      ]
+    },
+    {
+      "name": "x3_object_search",
+      "group": "admin",
+      "purpose": "Find the Sage X3 object code behind a business notion, a function or a screen: searches the object dictionary (AOBJET) by label, object code, function code or module, and returns the object's main table, primary key, main screen and management function. The first step before describing, listing, reading, creating or modifying an object.",
+      "returns": "One row per object: OBJECT_CODE (the 3-letter code used by every object tool), OBJECT_LABEL, MODULE_CODE, MODULE_LABEL, MAIN_TABLE, MAIN_TABLE_LABEL, PRIMARY_KEY (fields of the main index, e.g. SOHNUM), MAIN_SCREEN, MENU_CODE, FUNCTION_CODE (the GESxxx management function, when it exists), FUNCTION_LABEL, FUNCTIONS_ON_SAME_MENU.",
+      "use_instead": [],
+      "next_step": "Pass OBJECT_CODE to x3_object_describe to get the screens and fields, then x3_record_list or x3_object_read.",
+      "notes": "Object codes are stable across folders (SOH sales orders, POH purchase orders, ITM items, BPC customers, BPS suppliers, SIH sales invoices, PIH purchase invoices, MFG work orders). A function code is usually GES + object code. Module numbers: 1 Supervisor, 2 Financials, 3 A/P-A/R accounting, 5 Sales, 6 Purchasing, 7 Stock, 8 Manufacturing, 9 Common data, 11 Sage X3 internal, 13 CRM, 14 Fixed assets.",
+      "max_rows": 300,
+      "max_time": 30,
+      "filters": [
+        { "name": "label_contains", "type": "contains", "clause": "AND (UPPER(ISNULL(TO_.TEXTE_0, '')) LIKE UPPER({{label_contains}}) OR UPPER(ISNULL(TF.TEXTE_0, '')) LIKE UPPER({{label_contains}}) OR UPPER(ISNULL(TT.TEXTE_0, '')) LIKE UPPER({{label_contains}}))", "description": "Word of the object, function or table label in the folder language, e.g. order, supplier, invoice." },
+        { "name": "object_code", "type": "list", "clause": "AND O.ABREV_0 IN ({{object_code}})", "description": "One or more exact object codes, e.g. SOH or SOH,POH." },
+        { "name": "object_code_starts", "type": "text", "clause": "AND O.ABREV_0 LIKE {{object_code_starts}} + '%'", "description": "Prefix of the object code, e.g. SO to list SOH, SOQ, SOV." },
+        { "name": "function_code", "type": "list", "clause": "AND F.CODINT_0 IN ({{function_code}})", "description": "One or more exact function codes, e.g. GESSOH." },
+        { "name": "main_table", "type": "list", "clause": "AND O.NOMFIC_0 IN ({{main_table}})", "description": "One or more main table names, e.g. SORDER, ITMMASTER." },
+        { "name": "module", "type": "list", "clause": "AND O.MODULE_0 IN ({{module}})", "description": "One or more module numbers, e.g. 5 for Sales." },
+        { "name": "with_function_only", "type": "boolean", "clause": "AND {{with_function_only}} = 1 AND F.CODINT_0 IS NOT NULL", "description": "true to keep only objects that have a GESxxx management function, i.e. a real screen a user opens." }
+      ]
+    }
+  ]
+}
