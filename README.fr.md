@@ -42,7 +42,7 @@ Aucun XML à écrire ni à parser.
 | | |
 |---|---|
 | Package npm | `n8n-nodes-nx3` |
-| Nœud n8n | **IntellX for Sage X3** (credential : *IntellX for Sage X3 API*) |
+| Nœuds n8n | **IntellX for Sage X3** (credential : *IntellX for Sage X3 API*) et **IntellX Query Interpreter for Sage X3** (même credential, voir [§8.3](#83-query-interpreter--un-requêteur-x3-en-sql)) |
 | Protocole | Web services SOAP Sage X3 (Syracuse), `CAdxWebServiceXmlCC` |
 | Côté X3 | Sous-programme `XCHATX3OBJ`, installé par le patch ChatX3 |
 | Périmètre | Objets et traitements standards, verticaux et spécifiques |
@@ -189,10 +189,12 @@ docker run -d --name n8n -p 5678:5678 \
 Redémarrez le conteneur après chaque build.
 
 > Un package chargé depuis le dossier `custom` est enregistré par n8n sous le
-> type `CUSTOM.nx3Soap` (et `CUSTOM.nx3SoapTool`), et non `n8n-nodes-nx3.nx3Soap`.
-> Un workflow exporté depuis une instance où le package vient de npm affiche
-> alors ses nœuds avec une icône `?` et propose d'installer le package : avant
-> l'import, modifiez le `type` des nœuds dans le JSON, ou installez depuis npm.
+> type `CUSTOM.nx3Soap` (et `CUSTOM.nx3SoapTool`). Les versions récentes de n8n
+> (2.x) résolvent aussi `n8n-nodes-nx3.nx3Soap` vers ce même package ; sur une
+> version plus ancienne, un workflow exporté depuis une instance où le package
+> vient de npm affiche ses nœuds avec une icône `?` et propose d'installer le
+> package : avant l'import, modifiez le `type` des nœuds dans le JSON, ou
+> installez depuis npm.
 
 ## 5. Credential
 
@@ -559,6 +561,38 @@ WHERE  USR_0 IN ({{logins}})
 > ce cas et vous indique de changer de type. Une valeur List ne peut pas
 > contenir de virgule, puisque c'est le séparateur.
 
+#### Paramètres en JSON
+
+**Parameters Mode** indique d'où viennent les valeurs. **Fields** est la liste
+ci-dessus. **JSON** prend toute la liste dans un seul champ, sous forme d'un
+tableau d'objets `{ "name", "type", "value" }` : c'est ce qu'il faut quand la
+requête *et* ses paramètres sont décidés en amont, par un catalogue de
+requêtes, un sous-workflow générique ou un nœud Code qui construit les filtres :
+
+```
+SQL Query:               ={{ $json.sqlQuery }}
+Parameters Mode:         JSON
+Query Parameters (JSON): ={{ $json.params }}
+```
+
+avec, sur l'item entrant :
+
+```json
+{
+  "sqlQuery": "SELECT … WHERE 1 = 1 [[AND BPCNUM_0 IN ({{customer}})]] [[AND CREDAT_0 >= {{from}}]]",
+  "params": [
+    { "name": "customer", "type": "list", "value": ["FR001", "FR002"] },
+    { "name": "from",     "type": "date", "value": "2025-01-01" }
+  ]
+}
+```
+
+`value` peut être une chaîne, un nombre, un booléen, `null` ou un tableau
+(joint par des virgules pour une List). Les règles d'échappement et de
+`[[ ... ]]` sont les mêmes ; un `type` inconnu lève une erreur au lieu de
+retomber en silence sur Text. Le template de la [§12](#12-exemples-de-workflows)
+construit tout un serveur MCP sur ce mode.
+
 ### 8.2 Simplify et Row Format
 
 Sage X3 renvoie les lignes SQL avec des clés génériques, `Col_1`, `Col_2`…, et
@@ -577,7 +611,10 @@ partir de la requête :
 L'enveloppe se réduit aux données : `success`, `messages` et `trace`
 n'apparaissent qu'en cas de problème. Un échec n'est donc jamais silencieux,
 et le cas nominal reste compact, ce qui compte quand les lignes alimentent un
-agent IA.
+agent IA. Quand le nombre de lignes atteint **Max Lines**, `truncated: true`
+est ajouté : Sage X3 s'arrête au plafond sans le dire, et c'est cet indicateur
+qui permet à un workflow ou à un agent de distinguer un résultat complet d'une
+tranche.
 
 Les dates sont renvoyées en `YYYY-MM-DD`, et la valeur `0000-00-00` que X3
 utilise pour « non renseigné » devient `null`. L'heure n'est retirée que si
@@ -599,6 +636,127 @@ pas touchées. Le renommage est fait au mieux et ne réordonne ni ne perd jamais
 de données : avec `SELECT *`, une expression non résolue ou un nombre de
 colonnes différent, les clés `Col_N` d'origine sont conservées. Laissez
 Simplify désactivé pour obtenir l'enveloppe complète du [§9](#9-sortie).
+
+### 8.3 Query Interpreter : un requêteur X3 en SQL
+
+Le package embarque un second nœud, **IntellX Query Interpreter for Sage X3**,
+sur le même credential. Donnez-lui le code d'un requêteur graphique Sage X3
+(objet `ALT`) : il lit sa définition dans X3, la restitue sous forme de
+`SELECT` SQL, l'exécute par le même chemin que `SQL Select` et renvoie les
+lignes. Une requête conçue par un key user dans X3 devient ainsi un seul nœud
+n8n, avec l'écran des bornes X3 comme paramètres, prêt à être planifié ou
+confié à un agent IA sans la réécrire à la main.
+
+Un requêteur est stocké dans `ALT1.CLBFL` sous forme de document XML X3PORTAL :
+les tables et leurs abréviations, les liens entre elles, et les colonnes
+déposées sur la grille. Les critères de sélection sont à côté, dans `ALT2.SEL`,
+écrits dans le langage d'expression 4GL de X3. Le nœud traduit l'ensemble :
+
+| X3 | SQL |
+| --- | --- |
+| `<Table Id="SQH" Name="SQUOTE">` | `FROM [SQUOTE] SQH` |
+| `<Link Sid="[ITP]BPSNUM" Tid="[BPS]BPSNUM" Join="L">` | `LEFT JOIN [BPSUPPLIER] BPS ON ITP.BPSNUM_0 = BPS.BPSNUM_0` (`I` interne, `R` externe droite ; plusieurs liens sur la même paire fusionnent dans un seul `ON`) |
+| `[F:SQH]BPCNAM(1)` | `SQH.BPCNAM_1` |
+| `<DroppedField Expr="[SQH]BPCORD" Lbl="Client">` | `SQH.BPCORD_0 AS [Client]` |
+| `Expr="=+1"` | `1 AS [Nombre]` (colonne formule) |
+| `&`, `\|`, `!` | `AND`, `OR`, `NOT` |
+| `"texte"`, `'texte'` | `'texte'` |
+| `[0/0/0]`, `[31/12/2025]` | `'1753-01-01'`, `'2025-12-31'` (Oracle : `DATE '1599-12-31'`) |
+| `date$`, `datetime$` | `CAST(GETDATE() AS date)`, `GETDATE()` (Oracle : `TRUNC(SYSDATE)`, `SYSDATE`) |
+| `left$`, `right$`, `mid$`, `len`, `toupper`, `tolower`, `num$`, `val`, `int`, `abs`, `year`, `month`, `day`, `gdat$`, `string$`, `instr`, `pat` | la fonction SQL Server ou Oracle correspondante |
+| `Sort="A"` / `"D"` | `ORDER BY`, par niveau de rupture puis ordre des colonnes |
+| `MAXLIG` (Maximum lignes) | `TOP (n)` (Oracle : `FETCH FIRST n ROWS ONLY`) |
+
+Ce que le nœud ne sait pas traduire (une variable globale X3 comme `GUSER`, un
+appel `func`, une fonction inconnue) est laissé tel quel dans le SQL et
+signalé dans `warnings` : le résultat n'est jamais faux en silence.
+
+**Paramètres**
+
+- **Query Source** : *Query Code* (défaut) lit la fiche `ALT` dans Sage X3.
+  *Incoming Item* prend la définition dans l'item entrant, tel que produit par
+  `Read Sage X3 Object` sur `ALT` (il cherche `data.ALT1.CLBFL`, `ALT1.CLBFL`
+  seul, ou une chaîne `CLBFL`). *Manual* prend le XML et les critères dans des
+  champs.
+- **Execute** : activé par défaut, le SQL est exécuté sur Sage X3 et les
+  lignes reviennent. Désactivé, le nœud renvoie seulement le SQL et la
+  structure du requêteur.
+- **Bounds** : l'écran des bornes X3, une ligne par colonne avec une valeur
+  *From* et une valeur *To*, toutes deux incluses, l'une ou l'autre pouvant
+  rester vide. La colonne se nomme par son champ (`BPCORD`), par abréviation et
+  champ (`SQH_BPCORD`) ou par son libellé de grille (`Client`). Seules les
+  colonnes que le requêteur déclare bornables (`Bounds="Y"`) sont acceptées ;
+  un nom inconnu échoue avec la liste des colonnes bornables. Les valeurs sont
+  échappées selon leur type (`date`, `number`, `text`, d'après les types de
+  données X3), jamais concaténées brutes.
+- **Options**
+  - *Bounds as Parameters* : quand Execute est désactivé, conserve une clause
+    optionnelle `[[AND col >= {{ABREV_CHAMP_from}}]]` /
+    `[[AND col <= {{ABREV_CHAMP_to}}]]` par colonne bornable, avec la syntaxe
+    du [§8.1](#81-paramètres-de-requête) et la liste typée des paramètres sous
+    `parameters`. Toujours actif quand Execute est activé.
+  - *Column Aliases* : `Label` (le libellé de la grille, `[Nom client]`),
+    `Code` (`SQH_BPCNAM`, les formules en `EXPR_n`) ou `None`.
+  - *Include Hidden Columns* : conserve les colonnes `Vis="N"` dans le
+    `SELECT`.
+  - *Include Query Structure* : ajoute tables, jointures, colonnes, critères
+    et tri à côté des lignes.
+  - *Include Table Fields* : ajoute tous les champs et index de chaque table.
+  - *Max Lines* : `-1` garde le plafond du requêteur, `0` le retire, toute
+    autre valeur le remplace ; transmis aussi à X3 en `max_lines`.
+  - *Max Time (Seconds)* : le plafond `max_time` de X3.
+  - *Row Format* : `Objects` (défaut) ou `Arrays`, comme au
+    [§8.2](#82-simplify-et-row-format).
+  - *Schema* : préfixe de dossier des tables, par exemple `SEED` ou
+    `basex3.SEED`. Inutile quand le SQL passe par X3, déjà dans le dossier.
+  - *SQL Dialect* : SQL Server (défaut) ou Oracle.
+- **Advanced Options** : les mêmes surcharges d'appel que le nœud principal :
+  langue, alias et id de pool, public name, timeout, et *Include Request in
+  Output* pour l'appel SQL.
+
+**Sortie**
+
+Avec Execute activé, la même forme que `SQL Select` en Simplify, plus
+l'identité du requêteur et le SQL exécuté :
+
+```json
+{
+  "code": "FRVEN055",
+  "title": "Devis à relancer / client",
+  "rowCount": 12,
+  "columns": ["Client", "Nom client", "Site vente", "Date devis", "No devis"],
+  "rows": [{ "Client": "FR001", "Nom client": "Urban Cycle", "Site vente": "FR011", "Date devis": "2026-09-02", "No devis": "SQHFR0110042" }],
+  "sql": "SELECT\n  SQH.BPCORD_0 AS [Client],\n  ...\nFROM [SQUOTE] SQH\nWHERE (SQH.QUOSTA_0 = 1)\n  AND SQH.BPCORD_0 >= 'FR'\nORDER BY SQH.BPCORD_0 ASC"
+}
+```
+
+`truncated: true` apparaît quand le nombre de lignes atteint le plafond,
+`warnings` quand une partie du requêteur n'a pas pu être traduite. Avec
+Execute désactivé, la structure :
+
+```json
+{
+  "code": "FRVEN055",
+  "title": "Devis à relancer / client",
+  "objectLink": "SQH",
+  "functionLink": "EXEALH",
+  "tables": [{ "alias": "SQH", "name": "SQUOTE", "label": "En-tête devis", "sql": "[SQUOTE]" }],
+  "joins": [],
+  "columns": [
+    { "position": 1, "label": "Client", "expression": "[SQH]BPCORD", "sql": "SQH.BPCORD_0",
+      "alias": "Client", "visible": true, "sort": "asc", "level": 1, "sum": false, "bounds": true, "type": "BPR" }
+  ],
+  "criteria": [{ "x3": "[F:SQH]QUOSTA=1", "sql": "SQH.QUOSTA_0 = 1" }],
+  "orderBy": [{ "sql": "SQH.BPCORD_0", "direction": "asc" }],
+  "parameters": [],
+  "sql": "SELECT\n  SQH.BPCORD_0 AS [Client],\n  ...\nFROM [SQUOTE] SQH\nWHERE ...\nORDER BY SQH.BPCORD_0 ASC",
+  "warnings": []
+}
+```
+
+`sum: true` marque une colonne que la grille X3 totalise à chaque rupture ; le
+SQL garde les lignes de détail, comme la grille, et vous laisse l'agrégation.
+`level` est le niveau de rupture de la colonne.
 
 ## 9. Sortie
 
@@ -690,6 +848,14 @@ server* sur n8n.io est un montage complet agent + MCP basé sur ce nœud.
   peut pas écrire de SQL, les valeurs sont échappées par le nœud, et les
   filtres non renseignés disparaissent d'eux-mêmes. **C'est l'approche à
   privilégier.**
+- **Les requêtes vivent dans un catalogue, un seul runner les exécute** : un
+  sous-workflow reçoit un nom de requête et un objet de filtres, retrouve la
+  requête dans un catalogue JSON, valide les filtres et appelle un unique nœud
+  SQL Select en **Parameters Mode : JSON**. L'agent et les clients MCP ne
+  voient que deux outils, `x3_query_catalog` et `x3_query_run`, quelle que soit
+  la taille du catalogue. Ajouter une requête, c'est une entrée JSON, sans
+  nouvel outil. C'est la conception du template de
+  [`templates/sage-x3-sql-mcp/`](templates/sage-x3-sql-mcp/README.md).
 
 ### 11.2 Rendre les filtres optionnels vraiment optionnels
 
@@ -752,6 +918,17 @@ Chaque octet renvoyé par un outil coûte des tokens, à chaque appel :
 3. Un `Read Sage X3 Object` dont l'identifiant recompose la clé à partir des
    positions, par exemple `={{ $json['1'] }}~{{ $json['0'] }}~1~{{ $json['6'] }}`.
 
+**Un serveur MCP SQL générique à partir d'un catalogue de requêtes**
+
+- Le template de [`templates/sage-x3-sql-mcp/`](templates/sage-x3-sql-mcp/README.md)
+  range ses requêtes et leurs filtres WHERE dans un catalogue JSON, les exécute
+  toutes via un sous-workflow runner en **Parameters Mode : JSON**, et n'expose
+  que **cinq outils** sur un agent IA et un serveur MCP : `x3_query_catalog` et
+  `x3_query_run` pour toutes les requêtes, `x3_object` (describe, list, read) et
+  `x3_object_write` (create, modify) via un runner objet, et `x3_object_guide`.
+  Ajouter une requête, c'est une entrée JSON et un fichier SQL, sans nouvel
+  outil.
+
 **SQL Select avec filtres**
 
 - Opération `SQL Select`, Simplify activé, requête :
@@ -764,6 +941,14 @@ Chaque octet renvoyé par un outil coûte des tokens, à chaque appel :
   ```
 - Query Parameters `customer` (Text) et `from` (Date) : laissez l'un ou l'autre
   vide pour retirer sa clause.
+
+**Exécuter un requêteur graphique X3 avec des bornes**
+
+- `IntellX Query Interpreter for Sage X3`, Query Source *Query Code*, code
+  `FRVEN055`, Execute activé, une borne : colonne `BPCORD`, de `FR` à `FRZZZ`.
+- Le nœud lit le requêteur, construit le SQL et renvoie les lignes en une
+  seule étape. Désactivez Execute pour voir le SQL et la structure, et passez
+  le `sql` à un nœud `SQL Select` si vous voulez le retoucher à la main.
 
 ## 13. Dépannage
 
@@ -808,6 +993,10 @@ nom de la trace X3.
 
 L'historique complet est dans [CHANGELOG.md](CHANGELOG.md).
 
+- **0.6.0** — **Parameters Mode : JSON** sur les opérations SQL ; indicateur
+  `truncated` sur Simplify ; caps numériques acceptés depuis une expression
+  texte ; template MCP générique avec catalogue de requêtes et sous-workflow
+  runner.
 - **0.5.2** — Test de la credential en vrai POST sur l'endpoint SOAP ; erreurs
   HTTP expliquées avec l'URL appelée ; `technicalInfos` désormais optionnel.
 - **0.5.1** — Simplify retrouve les noms de colonnes d'une requête qui

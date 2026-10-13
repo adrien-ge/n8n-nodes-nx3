@@ -10,6 +10,54 @@ This file is written by hand. `auto-changelog` is redirected to
 
 ## [Unreleased]
 
+### Added
+
+- **IntellX Query Interpreter for Sage X3**, a second node in the package, on
+  the same credential. Given the code of a Sage X3 graphical query (object
+  `ALT`), it reads the record, renders the X3PORTAL XML in `ALT1.CLBFL` plus
+  the `ALT2.SEL` criteria as a SQL `SELECT` for SQL Server or Oracle, runs it
+  through the same `SQL Select` path as the main node and returns the rows
+  (Simplify shape, `Objects` or `Arrays`). The X3 bounds screen becomes a
+  **Bounds** list: column by field, alias and field or grid label, with
+  inclusive From / To values escaped by type. **Execute** off returns the SQL
+  and the structure only. The translation covers tables with their aliases,
+  `INNER` / `LEFT` / `RIGHT` joins from the `<Links>` (several links on the
+  same pair merged into one `ON`), dropped columns with their labels as
+  aliases, formula columns, `ORDER BY` from the sort flags and break levels,
+  `TOP` from the query's Max Lines. The X3 4GL criteria are translated
+  (`&`/`|`/`!`, `[0/0/0]` and date literals, `date$`, string and date
+  functions); what cannot be translated is left as-is and reported in
+  `warnings`. With Execute off, every bounded column can become a pair of
+  optional `[[AND col >= {{x_from}}]]` / `[[AND col <= {{x_to}}]]` clauses
+  with a typed parameter list, ready for `SQL Select`. The definition may
+  also come from the incoming item (output of `Read Sage X3 Object` on `ALT`)
+  or be pasted by hand.
+- The SOAP plumbing shared by both nodes (call context, envelope, response
+  parsing, SQL parameters, Simplify output, error messages) now lives in
+  `nodes/Nx3Soap/x3Soap.ts`; the main node's behaviour is unchanged.
+- **Parameters Mode** on SQL Analyse and SQL Select: **Fields** (the existing
+  one-row-per-parameter list) or **JSON**, where the whole parameter list is a
+  single `[{ "name", "type", "value" }]` array, usually fed by an expression
+  such as `{{ $json.params }}`. Values may be strings, numbers, booleans,
+  `null` or arrays (joined with commas for a List). Each entry is checked
+  strictly — an unknown type is an error, not a silent fallback to Text. This
+  is what a generic sub-workflow needs to run queries stored outside the node,
+  with the filters decided at call time.
+- `truncated: true` on the Simplify output when the row count reaches
+  `Max Lines`. Sage X3 stops at the cap without saying so; the flag lets a
+  workflow or an AI Agent tell a complete result from a slice.
+- `templates/sage-x3-sql-mcp/`: a generic AI Agent + MCP server template where
+  the SQL queries and their WHERE filters live in a JSON catalogue, executed by
+  a single runner sub-workflow, and only five tools are exposed:
+  `x3_query_catalog`, `x3_query_run`, `x3_object` (describe, list, read),
+  `x3_object_write` (create, modify) and `x3_object_guide`. A build script
+  generates the workflows from the catalogue.
+
+### Fixed
+
+- `Max Lines` and `Max Time` set through an expression that returns a numeric
+  string (`"200"`) were silently ignored; they are now coerced to numbers.
+
 ### Documentation
 
 - One README, rebuilt as a single reference in the order a user needs it: how

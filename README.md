@@ -41,7 +41,7 @@ and returns a clean, ready-to-use object. No XML wrangling required.
 | | |
 |---|---|
 | npm package | `n8n-nodes-nx3` |
-| n8n node | **IntellX for Sage X3** (credential: *IntellX for Sage X3 API*) |
+| n8n nodes | **IntellX for Sage X3** (credential: *IntellX for Sage X3 API*) and **IntellX Query Interpreter for Sage X3** (same credential, see [§8.3](#83-query-interpreter-an-x3-graphical-query-as-sql)) |
 | Protocol | Sage X3 SOAP web services (Syracuse), `CAdxWebServiceXmlCC` |
 | X3 side | `XCHATX3OBJ` sub-program, installed by the ChatX3 patch |
 | Scope | Standard, vertical and custom objects and actions |
@@ -181,10 +181,11 @@ docker run -d --name n8n -p 5678:5678 \
 Restart the container after every rebuild.
 
 > A package loaded from the `custom` folder is registered by n8n under the type
-> `CUSTOM.nx3Soap` (and `CUSTOM.nx3SoapTool`), not `n8n-nodes-nx3.nx3Soap`. A
-> workflow exported from an instance where the package came from npm then shows
-> its nodes with a `?` icon and asks to install the package: edit the `type` of
-> the nodes in the JSON before importing, or install from npm instead.
+> `CUSTOM.nx3Soap` (and `CUSTOM.nx3SoapTool`). Recent n8n versions (2.x) also
+> resolve `n8n-nodes-nx3.nx3Soap` to that same package; on an older version, a
+> workflow exported from an instance where the package came from npm shows its
+> nodes with a `?` icon and asks to install the package: edit the `type` of the
+> nodes in the JSON before importing, or install from npm instead.
 
 ## 5. Credentials
 
@@ -538,6 +539,37 @@ WHERE  USR_0 IN ({{logins}})
 > case and tells you to switch type. A List value cannot itself contain a
 > comma, since the comma is the separator.
 
+#### Parameters as JSON
+
+**Parameters Mode** picks where the values come from. **Fields** is the list
+above. **JSON** takes the whole list in one field, as an array of
+`{ "name", "type", "value" }` objects, which is what you want when the query
+*and* its parameters are decided upstream — a catalogue of queries, a generic
+sub-workflow, a Code node that builds the filters:
+
+```
+SQL Query:               ={{ $json.sqlQuery }}
+Parameters Mode:         JSON
+Query Parameters (JSON): ={{ $json.params }}
+```
+
+with, on the incoming item:
+
+```json
+{
+  "sqlQuery": "SELECT … WHERE 1 = 1 [[AND BPCNUM_0 IN ({{customer}})]] [[AND CREDAT_0 >= {{from}}]]",
+  "params": [
+    { "name": "customer", "type": "list", "value": ["FR001", "FR002"] },
+    { "name": "from",     "type": "date", "value": "2025-01-01" }
+  ]
+}
+```
+
+`value` may be a string, a number, a boolean, `null` or an array (joined with
+commas for a List). The same escaping and `[[ ... ]]` rules apply; an unknown
+`type` is an error rather than a silent fallback to Text. The template in
+[§12](#12-workflow-recipes) builds a whole MCP server on this mode.
+
 ### 8.2 Simplify and Row Format
 
 Sage X3 returns SQL rows with generic keys — `Col_1`, `Col_2`… — losing the
@@ -555,6 +587,9 @@ rows with their real names restored from the query:
 The envelope shrinks to the data itself: `success`, `messages` and `trace`
 only appear when something went wrong, so a failure is never silent while the
 happy path stays cheap to read — which matters when the rows feed an AI Agent.
+When the row count reaches **Max Lines**, `truncated: true` is added: Sage X3
+stops at the cap without saying so, and the flag is how a workflow or an agent
+tells a complete result from a slice.
 
 Dates come back as plain `YYYY-MM-DD`, and X3's `0000-00-00` "not set"
 sentinel becomes `null`. The time part is dropped only when it is exactly
@@ -573,6 +608,123 @@ string literals are left alone. The renaming is best-effort and never reorders
 or drops data: with `SELECT *`, an unresolvable expression or any count
 mismatch, the original `Col_N` keys are kept. Leave Simplify off to get the
 full envelope of [§9](#9-output).
+
+### 8.3 Query Interpreter: an X3 graphical query as SQL
+
+The package ships a second node, **IntellX Query Interpreter for Sage X3**, on
+the same credential. Give it the code of a Sage X3 graphical query (object
+`ALT`, the *Requêteur graphique*): it reads the definition from X3, renders it
+as a SQL `SELECT`, runs it through the same path as `SQL Select` and returns
+the rows. A query a key user designed in X3 thus becomes one n8n node, with
+the X3 bounds screen as parameters, ready to be scheduled or handed to an AI
+Agent without rewriting it by hand.
+
+A query is stored as an X3PORTAL XML document in `ALT1.CLBFL`: the tables and
+their aliases, the links between them, and the columns dropped on the grid.
+The selection criteria sit next to it in `ALT2.SEL`, written in the X3 4GL
+expression language. The node turns all of it into SQL:
+
+| X3 | SQL |
+| --- | --- |
+| `<Table Id="SQH" Name="SQUOTE">` | `FROM [SQUOTE] SQH` |
+| `<Link Sid="[ITP]BPSNUM" Tid="[BPS]BPSNUM" Join="L">` | `LEFT JOIN [BPSUPPLIER] BPS ON ITP.BPSNUM_0 = BPS.BPSNUM_0` (`I` inner, `R` right; several links on the same pair merge into one `ON`) |
+| `[F:SQH]BPCNAM(1)` | `SQH.BPCNAM_1` |
+| `<DroppedField Expr="[SQH]BPCORD" Lbl="Customer">` | `SQH.BPCORD_0 AS [Customer]` |
+| `Expr="=+1"` | `1 AS [Nombre]` (formula column) |
+| `&`, `\|`, `!` | `AND`, `OR`, `NOT` |
+| `"text"`, `'text'` | `'text'` |
+| `[0/0/0]`, `[31/12/2025]` | `'1753-01-01'`, `'2025-12-31'` (Oracle: `DATE '1599-12-31'`) |
+| `date$`, `datetime$` | `CAST(GETDATE() AS date)`, `GETDATE()` (Oracle: `TRUNC(SYSDATE)`, `SYSDATE`) |
+| `left$`, `right$`, `mid$`, `len`, `toupper`, `tolower`, `num$`, `val`, `int`, `abs`, `year`, `month`, `day`, `gdat$`, `string$`, `instr`, `pat` | the matching SQL Server or Oracle function |
+| `Sort="A"` / `"D"` | `ORDER BY`, by break level then column order |
+| `MAXLIG` (Max lines) | `TOP (n)` (Oracle: `FETCH FIRST n ROWS ONLY`) |
+
+Anything the node cannot translate (an X3 global variable such as `GUSER`, a
+`func` call, an unknown function) is left as-is in the SQL and listed in
+`warnings`, so the result is never silently wrong.
+
+**Parameters**
+
+- **Query Source** — *Query Code* (default) reads the `ALT` record from Sage
+  X3. *Incoming Item* takes the definition from the incoming item, as produced
+  by `Read Sage X3 Object` on `ALT` (it looks for `data.ALT1.CLBFL`, the bare
+  `ALT1.CLBFL`, or a `CLBFL` string). *Manual* takes the XML and the criteria
+  as fields.
+- **Execute** — on by default: the SQL is run on Sage X3 and the rows come
+  back. Off: the node returns the SQL and the query structure only.
+- **Bounds** — the X3 bounds screen: one row per column with a *From* and a
+  *To* value, both inclusive, either side may stay empty. Name the column by
+  its field (`BPCORD`), by alias and field (`SQH_BPCORD`) or by its grid label
+  (`Customer`). Only the columns the query marks as bounded (`Bounds="Y"`) are
+  accepted; an unknown name fails with the list of bounded columns. Values are
+  escaped by type (`date`, `number`, `text`, from the X3 data types), never
+  concatenated raw.
+- **Options**
+  - *Bounds as Parameters* — when Execute is off, keep an optional
+    `[[AND col >= {{ALIAS_FIELD_from}}]]` / `[[AND col <= {{ALIAS_FIELD_to}}]]`
+    clause per bounded column, in the syntax of [§8.1](#81-query-parameters),
+    with the typed parameter list under `parameters`. Always on when Execute
+    is on.
+  - *Column Aliases* — `Label` (the grid label, `[Customer name]`), `Code`
+    (`SQH_BPCNAM`, formulas as `EXPR_n`) or `None`.
+  - *Include Hidden Columns* — keep the `Vis="N"` columns in the `SELECT`.
+  - *Include Query Structure* — add tables, joins, columns, criteria and
+    order by next to the rows.
+  - *Include Table Fields* — add every field and index of each table.
+  - *Max Lines* — `-1` keeps the query's own cap, `0` removes it, any other
+    value replaces it; also sent to X3 as `max_lines`.
+  - *Max Time (Seconds)* — the X3 `max_time` cap.
+  - *Row Format* — `Objects` (default) or `Arrays`, as in
+    [§8.2](#82-simplify-and-row-format).
+  - *Schema* — folder prefix for table names, e.g. `SEED` or `basex3.SEED`.
+    Not needed when the SQL runs through X3, which is already in the folder.
+  - *SQL Dialect* — SQL Server (default) or Oracle.
+- **Advanced Options** — the same call overrides as the main node: code
+  language, pool alias and id, public name, request timeout, and *Include
+  Request in Output* for the SQL call.
+
+**Output**
+
+With Execute on, the same shape as `SQL Select` with Simplify, plus the query
+identity and the SQL that was run:
+
+```json
+{
+  "code": "FRVEN055",
+  "title": "Open Quotes",
+  "rowCount": 12,
+  "columns": ["Customer", "Customer name", "Sales site", "Quote date", "Quote no."],
+  "rows": [{ "Customer": "FR001", "Customer name": "Urban Cycle", "Sales site": "FR011", "Quote date": "2026-09-02", "Quote no.": "SQHFR0110042" }],
+  "sql": "SELECT\n  SQH.BPCORD_0 AS [Customer],\n  ...\nFROM [SQUOTE] SQH\nWHERE (SQH.QUOSTA_0 = 1)\n  AND SQH.BPCORD_0 >= 'FR'\nORDER BY SQH.BPCORD_0 ASC"
+}
+```
+
+`truncated: true` appears when the row count reaches the cap, `warnings` when
+part of the query could not be translated. With Execute off, the structure:
+
+```json
+{
+  "code": "FRVEN055",
+  "title": "Open Quotes",
+  "objectLink": "SQH",
+  "functionLink": "EXEALH",
+  "tables": [{ "alias": "SQH", "name": "SQUOTE", "label": "Quote header", "sql": "[SQUOTE]" }],
+  "joins": [],
+  "columns": [
+    { "position": 1, "label": "Customer", "expression": "[SQH]BPCORD", "sql": "SQH.BPCORD_0",
+      "alias": "Customer", "visible": true, "sort": "asc", "level": 1, "sum": false, "bounds": true, "type": "BPR" }
+  ],
+  "criteria": [{ "x3": "[F:SQH]QUOSTA=1", "sql": "SQH.QUOSTA_0 = 1" }],
+  "orderBy": [{ "sql": "SQH.BPCORD_0", "direction": "asc" }],
+  "parameters": [],
+  "sql": "SELECT\n  SQH.BPCORD_0 AS [Customer],\n  ...\nFROM [SQUOTE] SQH\nWHERE ...\nORDER BY SQH.BPCORD_0 ASC",
+  "warnings": []
+}
+```
+
+`sum: true` marks a column the X3 grid totals at each break; the SQL keeps the
+detail rows, as the grid does, and leaves the aggregation to you. `level` is
+the break level of the column.
 
 ## 9. Output
 
@@ -657,6 +809,14 @@ template on n8n.io is a complete agent + MCP setup built on this node.
   with `[[ ... ]]` optional clauses and put `$fromAI` on the **Value** of each
   Query Parameter. The model cannot write SQL, values are escaped by the node,
   and unfilled filters disappear on their own. **Prefer this one.**
+- **The queries live in a catalogue, one runner executes them** — a
+  sub-workflow receives a query name and a filters object, looks the query up
+  in a JSON catalogue, validates the filters, and calls one SQL Select node in
+  **Parameters Mode: JSON**. The agent and the MCP clients see two tools,
+  `x3_query_catalog` and `x3_query_run`, whatever the size of the catalogue.
+  Adding a query is one JSON entry, and adds no tool.
+  This is the design of the template in
+  [`templates/sage-x3-sql-mcp/`](templates/sage-x3-sql-mcp/README.md).
 
 ### 11.2 Make optional filters actually optional
 
@@ -712,6 +872,17 @@ Every byte of a tool result is paid for in tokens, on every call:
 3. A `Read Sage X3 Object` whose identifier maps the positions, e.g.
    `={{ $json['1'] }}~{{ $json['0'] }}~1~{{ $json['6'] }}`.
 
+**A generic SQL MCP server from a query catalogue**
+
+- The template in [`templates/sage-x3-sql-mcp/`](templates/sage-x3-sql-mcp/README.md)
+  stores its queries and WHERE filters in a JSON catalogue, runs them all through
+  one runner sub-workflow in **Parameters Mode: JSON**, and exposes only **five
+  tools** on an AI Agent and an MCP Server: `x3_query_catalog` and
+  `x3_query_run` for every query, `x3_object` (describe, list, read) and
+  `x3_object_write` (create, modify) through an object runner, and
+  `x3_object_guide`. Adding a query is one JSON entry and one SQL file, and
+  adds no tool.
+
 **Filtered SQL Select**
 
 - Operation `SQL Select`, Simplify on, query:
@@ -724,6 +895,14 @@ Every byte of a tool result is paid for in tokens, on every call:
   ```
 - Query Parameters `customer` (Text) and `from` (Date): leave either empty to
   drop its clause.
+
+**Run an X3 graphical query (Requêteur) with bounds**
+
+- `IntellX Query Interpreter for Sage X3`, Query Source *Query Code*, code
+  `FRVEN055`, Execute on, one Bound: column `BPCORD`, from `FR`, to `FRZZZ`.
+- The node reads the query, builds the SQL and returns the rows in one step.
+  Turn Execute off to see the SQL and the structure instead, and feed the
+  `sql` to a `SQL Select` node if you want to edit it by hand first.
 
 ## 13. Troubleshooting
 
@@ -767,6 +946,9 @@ the X3 trace name.
 
 The full history is in [CHANGELOG.md](CHANGELOG.md).
 
+- **0.6.0** — **Parameters Mode: JSON** on SQL operations; `truncated` flag on
+  Simplify; numeric caps accepted from string expressions; generic MCP template
+  with a query catalogue and a runner sub-workflow.
 - **0.5.2** — Credential test does a real POST on the SOAP endpoint; HTTP
   failures explained with the URL called; `technicalInfos` now opt-in.
 - **0.5.1** — Simplify recovers column names on a query that opens with a
