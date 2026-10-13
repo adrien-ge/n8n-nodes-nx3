@@ -12,27 +12,36 @@ This file is written by hand. `auto-changelog` is redirected to
 
 ### Added
 
-- **IntellX Query Interpreter for Sage X3**, a second node in the package, on
-  the same credential. Given the code of a Sage X3 graphical query (object
-  `ALT`), it reads the record, renders the X3PORTAL XML in `ALT1.CLBFL` plus
-  the `ALT2.SEL` criteria as a SQL `SELECT` for SQL Server or Oracle, runs it
-  through the same `SQL Select` path as the main node and returns the rows
-  (Simplify shape, `Objects` or `Arrays`). The X3 bounds screen becomes a
-  **Bounds** list: column by field, alias and field or grid label, with
+- **Run Sage X3 Query** operation. Given the code of a Sage X3 graphical
+  query (object `ALT`), it reads the record, renders the X3PORTAL XML in
+  `ALT1.CLBFL` plus the `ALT2.SEL` criteria as a SQL `SELECT` for SQL Server
+  or Oracle, runs it through the same path as `SQL Select` and returns the
+  rows (Simplify shape, `Objects` or `Arrays`). The X3 bounds screen becomes
+  a **Bounds** list: column by field, alias and field or grid label, with
   inclusive From / To values escaped by type. **Execute** off returns the SQL
   and the structure only. The translation covers tables with their aliases,
   `INNER` / `LEFT` / `RIGHT` joins from the `<Links>` (several links on the
   same pair merged into one `ON`), dropped columns with their labels as
   aliases, formula columns, `ORDER BY` from the sort flags and break levels,
   `TOP` from the query's Max Lines. The X3 4GL criteria are translated
-  (`&`/`|`/`!`, `[0/0/0]` and date literals, `date$`, string and date
-  functions); what cannot be translated is left as-is and reported in
-  `warnings`. With Execute off, every bounded column can become a pair of
+  (`&`/`|`/`!` and `and`/`or`/`not`, `[0/0/0]` and date literals, `date$`,
+  `find()` as `IN`, `addmonth`, date arithmetic as `DATEDIFF` / `DATEADD`,
+  fields of the main table written without prefix, `GACTX.LAN` as the
+  credential language, `GACTX.USER` as the *X3 User* option, string and date
+  functions); the link expressions of the *Links* tab (`ALT2.LNK`, a table
+  read through one of its indexes) become `LEFT JOIN`s next to the graphical
+  links; translatable texts (X3 types `AX*`, such as
+  item descriptions) become an `ATEXTRA` lookup and local-menu columns an
+  `APLSTD` label lookup (option *Local Menus*: label, code or both), both in
+  the credential's language; what cannot be translated is left as-is and
+  reported in `warnings`. With Execute off, every bounded column can become a pair of
   optional `[[AND col >= {{x_from}}]]` / `[[AND col <= {{x_to}}]]` clauses
   with a typed parameter list, ready for `SQL Select`.
-- The SOAP plumbing shared by both nodes (call context, envelope, response
-  parsing, SQL parameters, Simplify output, error messages) now lives in
-  `nodes/Nx3Soap/x3Soap.ts`; the main node's behaviour is unchanged.
+- The SOAP plumbing (call context, envelope, response parsing, SQL
+  parameters, Simplify output, error messages) now lives in
+  `nodes/Nx3Soap/x3Soap.ts`, the query interpreter in `x3QueryInterpreter.ts`
+  and the operation in `x3QueryRun.ts`; the existing operations behave as
+  before.
 - **Parameters Mode** on SQL Analyse and SQL Select: **Fields** (the existing
   one-row-per-parameter list) or **JSON**, where the whole parameter list is a
   single `[{ "name", "type", "value" }]` array, usually fed by an expression
@@ -50,6 +59,18 @@ This file is written by hand. `auto-changelog` is redirected to
   `x3_query_catalog`, `x3_query_run`, `x3_object` (describe, list, read),
   `x3_object_write` (create, modify) and `x3_object_guide`. A build script
   generates the workflows from the catalogue.
+
+### Changed
+
+- Node **version 2**: the ten operations are grouped under a **Resource** —
+  *Object* (Read, List, Create, Modify, Describe, Custom Action), *SQL*
+  (Analyse, Select), *Query* (Run) and *Sub-Program* (Run) — as n8n's UX
+  guidelines ask once a node has more than five operations. Workflows saved
+  with version 1 keep the flat list and run unchanged; both versions share
+  the same code and the same operation values, so expressions such as
+  `$parameter["operation"]` still work.
+- Every example placeholder now reads `e.g. …`, as the UX guidelines ask, and
+  the credential's Base URL example no longer names a real host.
 
 ### Fixed
 

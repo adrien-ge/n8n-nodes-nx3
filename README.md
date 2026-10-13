@@ -41,7 +41,7 @@ and returns a clean, ready-to-use object. No XML wrangling required.
 | | |
 |---|---|
 | npm package | `n8n-nodes-nx3` |
-| n8n nodes | **IntellX for Sage X3** (credential: *IntellX for Sage X3 API*) and **IntellX Query Interpreter for Sage X3** (same credential, see [§8.3](#83-query-interpreter-an-x3-graphical-query-as-sql)) |
+| n8n node | **IntellX for Sage X3** (credential: *IntellX for Sage X3 API*) |
 | Protocol | Sage X3 SOAP web services (Syracuse), `CAdxWebServiceXmlCC` |
 | X3 side | `XCHATX3OBJ` sub-program, installed by the ChatX3 patch |
 | Scope | Standard, vertical and custom objects and actions |
@@ -211,17 +211,25 @@ missing port (Syracuse listens on 8124 or 8443, rarely on 443).
 
 ## 6. Operations
 
-| Operation | X3 action | What it does |
-| --- | --- | --- |
-| **Read Sage X3 Object** | `READ` | Read a record by its identifier and return its full field tree |
-| **List Sage X3 Objects** | `LIST` | List the records of an object, with optional selection criteria |
-| **Create Sage X3 Object** | `CREATE` | Create a record from a JSON payload |
-| **Modify Sage X3 Object** | `MODIFY` | Update fields of an existing record |
-| **Describe Sage X3 Object** | `DESC` | Get the screens, fields and local menus of an object class |
-| **Custom Sage X3 Action** | *(free text)* | Send any `XACTION` the patch exposes, including future ones |
-| **SQL Analyse** | `ANALYSE` | Check that a SQL query is valid, without returning rows |
-| **SQL Select** | `SELECT` | Execute a SQL `SELECT` and return the rows |
-| **Run Sub-Program (Advanced)** | *(raw XML)* | Call any X3 sub-program with a raw input payload — the escape hatch |
+Pick a **Resource**, then an **Operation**:
+
+| Resource | Operation | X3 action | What it does |
+| --- | --- | --- | --- |
+| Object | **Read** | `READ` | Read a record by its identifier and return its full field tree |
+| Object | **List** | `LIST` | List the records of an object, with optional selection criteria |
+| Object | **Create** | `CREATE` | Create a record from a JSON payload |
+| Object | **Modify** | `MODIFY` | Update fields of an existing record |
+| Object | **Describe** | `DESC` | Get the screens, fields and local menus of an object class |
+| Object | **Custom Action** | *(free text)* | Send any `XACTION` the patch exposes, including future ones |
+| SQL | **Analyse** | `ANALYSE` | Check that a SQL query is valid, without returning rows |
+| SQL | **Select** | `SELECT` | Execute a SQL `SELECT` and return the rows |
+| Query | **Run** | `READ` + `SELECT` | Run a graphical query (Requêteur, object `ALT`) by its code: its definition is read, translated to SQL and executed, with the X3 bounds as parameters — see [§8.3](#83-run-sage-x3-query-an-x3-graphical-query-as-sql) |
+| Sub-Program | **Run (Advanced)** | *(raw XML)* | Call any X3 sub-program with a raw input payload — the escape hatch |
+
+Workflows saved with version 1 of the node keep its flat operation list
+(*Read Sage X3 Object*, *SQL Select*…) and keep working unchanged; nodes added
+from now on use version 2 with the resources above. The two versions run the
+same code.
 
 The **Action Code** field is always visible and pre-filled from the operation,
 so you can see exactly which `XACTION` is sent, and override it if needed.
@@ -609,15 +617,14 @@ or drops data: with `SELECT *`, an unresolvable expression or any count
 mismatch, the original `Col_N` keys are kept. Leave Simplify off to get the
 full envelope of [§9](#9-output).
 
-### 8.3 Query Interpreter: an X3 graphical query as SQL
+### 8.3 Run Sage X3 Query: an X3 graphical query as SQL
 
-The package ships a second node, **IntellX Query Interpreter for Sage X3**, on
-the same credential. Give it the code of a Sage X3 graphical query (object
-`ALT`, the *Requêteur graphique*): it reads the definition from X3, renders it
-as a SQL `SELECT`, runs it through the same path as `SQL Select` and returns
-the rows. A query a key user designed in X3 thus becomes one n8n node, with
-the X3 bounds screen as parameters, ready to be scheduled or handed to an AI
-Agent without rewriting it by hand.
+The **Run Sage X3 Query** operation takes the code of a Sage X3 graphical
+query (object `ALT`, the *Requêteur graphique*): it reads the definition from
+X3, renders it as a SQL `SELECT`, runs it through the same path as `SQL
+Select` and returns the rows. A query a key user designed in X3 thus becomes
+one n8n node, with the X3 bounds screen as parameters, ready to be scheduled
+or handed to an AI Agent without rewriting it by hand.
 
 A query is stored as an X3PORTAL XML document in `ALT1.CLBFL`: the tables and
 their aliases, the links between them, and the columns dropped on the grid.
@@ -636,6 +643,16 @@ expression language. The node turns all of it into SQL:
 | `[0/0/0]`, `[31/12/2025]` | `'1753-01-01'`, `'2025-12-31'` (Oracle: `DATE '1599-12-31'`) |
 | `date$`, `datetime$` | `CAST(GETDATE() AS date)`, `GETDATE()` (Oracle: `TRUNC(SYSDATE)`, `SYSDATE`) |
 | `left$`, `right$`, `mid$`, `len`, `toupper`, `tolower`, `num$`, `val`, `int`, `abs`, `year`, `month`, `day`, `gdat$`, `string$`, `instr`, `pat` | the matching SQL Server or Oracle function |
+| `find([F:ORD]WIPTYP, 2, 7)` | `ORD.WIPTYP_0 IN (2, 7)` |
+| `[F:ADI]CODE = 20 ; [F:ITM]TSICOD` (link expression of the *Links* tab, `ALT2.LNK`) | `LEFT JOIN [ATABDIV] ADI ON ADI.NUMTAB_0 = 20 AND ADI.CODE_0 = ITM.TSICOD_0`, the key fields coming from index `CODE` of the table |
+| `DLVOSTL`, `NYTBILL(2)` (field of the main table, no prefix) | `MVC.DLVOSTL_0`, `MVC.NYTBILL_2` |
+| `addmonth(date$, -12)` | `DATEADD(month, -12, CAST(GETDATE() AS date))` (Oracle: `ADD_MONTHS`) |
+| `[F:STL]SHLDAT - date$`, `date$ + 30` | `DATEDIFF(day, CAST(GETDATE() AS date), STL.SHLDAT_0)`, `DATEADD(day, 30, ...)` (Oracle keeps the native arithmetic) |
+| `GACTX.LAN`, `GLANGUE` | the credential language, e.g. `'FRA'` |
+| `GACTX.USER`, `GUSER` | the *X3 User* option, when set |
+| `and`, `or`, `not` | `AND`, `OR`, `NOT` |
+| `[ITM]DES1AXX` (translatable text, X3 type `AX*`) | `ISNULL((SELECT TOP (1) TEXTE_0 FROM [ATEXTRA] WHERE CODFIC_0 = 'ITMMASTER' AND ZONE_0 = 'DES1AXX' AND LANGUE_0 = 'FRA' AND IDENT1_0 = ITM.ITMREF_0 AND IDENT2_0 = ''), '')` — these fields have no column of their own; the language is the credential's |
+| `[SQH]QUOSTA` (local menu, X3 type `M`) | `ISNULL((SELECT TOP (1) LANMES_0 FROM [APLSTD] WHERE LAN_0 = 'FRA' AND LANCHP_0 = 430 AND LANNUM_0 = SQH.QUOSTA_0), '')` — the label, with the menu number read from the query definition; see the *Local Menus* option |
 | `Sort="A"` / `"D"` | `ORDER BY`, by break level then column order |
 | `MAXLIG` (Max lines) | `TOP (n)` (Oracle: `FETCH FIRST n ROWS ONLY`) |
 
@@ -656,7 +673,7 @@ Anything the node cannot translate (an X3 global variable such as `GUSER`, a
   accepted; an unknown name fails with the list of bounded columns. Values are
   escaped by type (`date`, `number`, `text`, from the X3 data types), never
   concatenated raw.
-- **Options**
+- **Query Options**
   - *Bounds as Parameters* — when Execute is off, keep an optional
     `[[AND col >= {{ALIAS_FIELD_from}}]]` / `[[AND col <= {{ALIAS_FIELD_to}}]]`
     clause per bounded column, in the syntax of [§8.1](#81-query-parameters),
@@ -670,15 +687,23 @@ Anything the node cannot translate (an X3 global variable such as `GUSER`, a
   - *Include Table Fields* — add every field and index of each table.
   - *Max Lines* — `-1` keeps the query's own cap, `0` removes it, any other
     value replaces it; also sent to X3 as `max_lines`.
+  - *Local Menus* — how a local-menu column (quote status, item status...)
+    comes back: `Label` (default, the text in the credential language, as
+    the X3 grid shows it), `Code` (the stored number) or `Both` (the label,
+    plus the number in a column named after the label followed by
+    ` (code)`). Criteria, bounds and sort always work on the number.
   - *Max Time (Seconds)* — the X3 `max_time` cap.
   - *Row Format* — `Objects` (default) or `Arrays`, as in
     [§8.2](#82-simplify-and-row-format).
   - *Schema* — folder prefix for table names, e.g. `SEED` or `basex3.SEED`.
     Not needed when the SQL runs through X3, which is already in the folder.
   - *SQL Dialect* — SQL Server (default) or Oracle.
-- **Advanced Options** — the same call overrides as the main node: code
-  language, pool alias and id, public name, request timeout, and *Include
-  Request in Output* for the SQL call.
+  - *X3 User* — the X3 user code substituted for `GUSER` / `GACTX.USER` in
+    the criteria of "my ..." queries (my quotes, my order book). Left empty,
+    the criterion is reported in `warnings` and the SQL fails.
+- **Advanced Options** — the usual call overrides of [§10](#10-advanced-options)
+  (code language, pool, public name, request timeout) and *Include Request in
+  Output*, which here describes the SQL call and the duration of each call.
 
 **Output**
 
@@ -896,8 +921,8 @@ Every byte of a tool result is paid for in tokens, on every call:
 
 **Run an X3 graphical query (Requêteur) with bounds**
 
-- `IntellX Query Interpreter for Sage X3`, Query Code `FRVEN055`, Execute
-  on, one Bound: column `BPCORD`, from `FR`, to `FRZZZ`.
+- Operation `Run Sage X3 Query`, Query Code `FRVEN055`, Execute on, one
+  Bound: column `BPCORD`, from `FR`, to `FRZZZ`.
 - The node reads the query, builds the SQL and returns the rows in one step.
   Turn Execute off to see the SQL and the structure instead, and feed the
   `sql` to a `SQL Select` node if you want to edit it by hand first.

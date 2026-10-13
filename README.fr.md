@@ -42,7 +42,7 @@ Aucun XML à écrire ni à parser.
 | | |
 |---|---|
 | Package npm | `n8n-nodes-nx3` |
-| Nœuds n8n | **IntellX for Sage X3** (credential : *IntellX for Sage X3 API*) et **IntellX Query Interpreter for Sage X3** (même credential, voir [§8.3](#83-query-interpreter--un-requêteur-x3-en-sql)) |
+| Nœud n8n | **IntellX for Sage X3** (credential : *IntellX for Sage X3 API*) |
 | Protocole | Web services SOAP Sage X3 (Syracuse), `CAdxWebServiceXmlCC` |
 | Côté X3 | Sous-programme `XCHATX3OBJ`, installé par le patch ChatX3 |
 | Périmètre | Objets et traitements standards, verticaux et spécifiques |
@@ -221,17 +221,25 @@ rarement sur 443).
 
 ## 6. Opérations
 
-| Opération | Action X3 | Description |
-| --- | --- | --- |
-| **Read Sage X3 Object** | `READ` | Lit un enregistrement par son identifiant et renvoie tous ses champs |
-| **List Sage X3 Objects** | `LIST` | Liste les enregistrements d'un objet, avec des critères de sélection optionnels |
-| **Create Sage X3 Object** | `CREATE` | Crée un enregistrement à partir d'un payload JSON |
-| **Modify Sage X3 Object** | `MODIFY` | Modifie des champs d'un enregistrement existant |
-| **Describe Sage X3 Object** | `DESC` | Renvoie les écrans, champs et menus locaux d'une classe d'objet |
-| **Custom Sage X3 Action** | *(texte libre)* | Envoie n'importe quel `XACTION` exposé par le patch, y compris ceux à venir |
-| **SQL Analyse** | `ANALYSE` | Vérifie qu'une requête SQL est valide, sans renvoyer de lignes |
-| **SQL Select** | `SELECT` | Exécute un `SELECT` SQL et renvoie les lignes |
-| **Run Sub-Program (Advanced)** | *(XML brut)* | Appelle n'importe quel sous-programme X3 avec un payload brut, en dernier recours |
+Choisissez une **Resource**, puis une **Operation** :
+
+| Resource | Operation | Action X3 | Description |
+| --- | --- | --- | --- |
+| Object | **Read** | `READ` | Lit un enregistrement par son identifiant et renvoie tous ses champs |
+| Object | **List** | `LIST` | Liste les enregistrements d'un objet, avec des critères de sélection optionnels |
+| Object | **Create** | `CREATE` | Crée un enregistrement à partir d'un payload JSON |
+| Object | **Modify** | `MODIFY` | Modifie des champs d'un enregistrement existant |
+| Object | **Describe** | `DESC` | Renvoie les écrans, champs et menus locaux d'une classe d'objet |
+| Object | **Custom Action** | *(texte libre)* | Envoie n'importe quel `XACTION` exposé par le patch, y compris ceux à venir |
+| SQL | **Analyse** | `ANALYSE` | Vérifie qu'une requête SQL est valide, sans renvoyer de lignes |
+| SQL | **Select** | `SELECT` | Exécute un `SELECT` SQL et renvoie les lignes |
+| Query | **Run** | `READ` + `SELECT` | Exécute un requêteur graphique (objet `ALT`) par son code : sa définition est lue, traduite en SQL et exécutée, avec les bornes X3 comme paramètres, voir [§8.3](#83-run-sage-x3-query--un-requêteur-x3-en-sql) |
+| Sub-Program | **Run (Advanced)** | *(XML brut)* | Appelle n'importe quel sous-programme X3 avec un payload brut, en dernier recours |
+
+Les workflows enregistrés avec la version 1 du nœud gardent sa liste
+d'opérations à plat (*Read Sage X3 Object*, *SQL Select*…) et continuent de
+fonctionner sans changement ; les nœuds ajoutés désormais sont en version 2,
+avec les ressources ci-dessus. Les deux versions exécutent le même code.
 
 Le champ **Action Code** est toujours visible et pré-rempli selon l'opération
 choisie : vous voyez exactement quel `XACTION` est envoyé, et vous pouvez le
@@ -637,11 +645,10 @@ de données : avec `SELECT *`, une expression non résolue ou un nombre de
 colonnes différent, les clés `Col_N` d'origine sont conservées. Laissez
 Simplify désactivé pour obtenir l'enveloppe complète du [§9](#9-sortie).
 
-### 8.3 Query Interpreter : un requêteur X3 en SQL
+### 8.3 Run Sage X3 Query : un requêteur X3 en SQL
 
-Le package embarque un second nœud, **IntellX Query Interpreter for Sage X3**,
-sur le même credential. Donnez-lui le code d'un requêteur graphique Sage X3
-(objet `ALT`) : il lit sa définition dans X3, la restitue sous forme de
+L'opération **Run Sage X3 Query** prend le code d'un requêteur graphique Sage
+X3 (objet `ALT`) : elle lit sa définition dans X3, la restitue sous forme de
 `SELECT` SQL, l'exécute par le même chemin que `SQL Select` et renvoie les
 lignes. Une requête conçue par un key user dans X3 devient ainsi un seul nœud
 n8n, avec l'écran des bornes X3 comme paramètres, prêt à être planifié ou
@@ -664,6 +671,16 @@ déposées sur la grille. Les critères de sélection sont à côté, dans `ALT2
 | `[0/0/0]`, `[31/12/2025]` | `'1753-01-01'`, `'2025-12-31'` (Oracle : `DATE '1599-12-31'`) |
 | `date$`, `datetime$` | `CAST(GETDATE() AS date)`, `GETDATE()` (Oracle : `TRUNC(SYSDATE)`, `SYSDATE`) |
 | `left$`, `right$`, `mid$`, `len`, `toupper`, `tolower`, `num$`, `val`, `int`, `abs`, `year`, `month`, `day`, `gdat$`, `string$`, `instr`, `pat` | la fonction SQL Server ou Oracle correspondante |
+| `find([F:ORD]WIPTYP, 2, 7)` | `ORD.WIPTYP_0 IN (2, 7)` |
+| `[F:ADI]CODE = 20 ; [F:ITM]TSICOD` (expression de lien de l'onglet *Liens*, `ALT2.LNK`) | `LEFT JOIN [ATABDIV] ADI ON ADI.NUMTAB_0 = 20 AND ADI.CODE_0 = ITM.TSICOD_0`, les champs clés venant de l'index `CODE` de la table |
+| `DLVOSTL`, `NYTBILL(2)` (champ de la table principale, sans préfixe) | `MVC.DLVOSTL_0`, `MVC.NYTBILL_2` |
+| `addmonth(date$, -12)` | `DATEADD(month, -12, CAST(GETDATE() AS date))` (Oracle : `ADD_MONTHS`) |
+| `[F:STL]SHLDAT - date$`, `date$ + 30` | `DATEDIFF(day, CAST(GETDATE() AS date), STL.SHLDAT_0)`, `DATEADD(day, 30, ...)` (Oracle garde l'arithmétique native) |
+| `GACTX.LAN`, `GLANGUE` | la langue du credential, par exemple `'FRA'` |
+| `GACTX.USER`, `GUSER` | l'option *X3 User*, quand elle est renseignée |
+| `and`, `or`, `not` | `AND`, `OR`, `NOT` |
+| `[ITM]DES1AXX` (texte traduisible, type X3 `AX*`) | `ISNULL((SELECT TOP (1) TEXTE_0 FROM [ATEXTRA] WHERE CODFIC_0 = 'ITMMASTER' AND ZONE_0 = 'DES1AXX' AND LANGUE_0 = 'FRA' AND IDENT1_0 = ITM.ITMREF_0 AND IDENT2_0 = ''), '')` : ces champs n'ont pas de colonne propre ; la langue est celle du credential |
+| `[SQH]QUOSTA` (menu local, type X3 `M`) | `ISNULL((SELECT TOP (1) LANMES_0 FROM [APLSTD] WHERE LAN_0 = 'FRA' AND LANCHP_0 = 430 AND LANNUM_0 = SQH.QUOSTA_0), '')` : le libellé, avec le numéro de menu lu dans la définition du requêteur ; voir l'option *Local Menus* |
 | `Sort="A"` / `"D"` | `ORDER BY`, par niveau de rupture puis ordre des colonnes |
 | `MAXLIG` (Maximum lignes) | `TOP (n)` (Oracle : `FETCH FIRST n ROWS ONLY`) |
 
@@ -686,7 +703,7 @@ signalé dans `warnings` : le résultat n'est jamais faux en silence.
   un nom inconnu échoue avec la liste des colonnes bornables. Les valeurs sont
   échappées selon leur type (`date`, `number`, `text`, d'après les types de
   données X3), jamais concaténées brutes.
-- **Options**
+- **Query Options**
   - *Bounds as Parameters* : quand Execute est désactivé, conserve une clause
     optionnelle `[[AND col >= {{ABREV_CHAMP_from}}]]` /
     `[[AND col <= {{ABREV_CHAMP_to}}]]` par colonne bornable, avec la syntaxe
@@ -701,15 +718,25 @@ signalé dans `warnings` : le résultat n'est jamais faux en silence.
   - *Include Table Fields* : ajoute tous les champs et index de chaque table.
   - *Max Lines* : `-1` garde le plafond du requêteur, `0` le retire, toute
     autre valeur le remplace ; transmis aussi à X3 en `max_lines`.
+  - *Local Menus* : la forme d'une colonne de menu local (état du devis,
+    statut article...) : `Label` (défaut, le libellé dans la langue du
+    credential, comme dans la grille X3), `Code` (le numéro stocké) ou `Both`
+    (le libellé, plus le numéro dans une colonne nommée d'après le libellé
+    suivi de ` (code)`). Critères, bornes et tri travaillent toujours sur le
+    numéro.
   - *Max Time (Seconds)* : le plafond `max_time` de X3.
   - *Row Format* : `Objects` (défaut) ou `Arrays`, comme au
     [§8.2](#82-simplify-et-row-format).
   - *Schema* : préfixe de dossier des tables, par exemple `SEED` ou
     `basex3.SEED`. Inutile quand le SQL passe par X3, déjà dans le dossier.
   - *SQL Dialect* : SQL Server (défaut) ou Oracle.
-- **Advanced Options** : les mêmes surcharges d'appel que le nœud principal :
-  langue, alias et id de pool, public name, timeout, et *Include Request in
-  Output* pour l'appel SQL.
+  - *X3 User* : le code utilisateur X3 substitué à `GUSER` / `GACTX.USER`
+    dans les critères des requêteurs « mes ... » (mes devis, mon carnet de
+    commandes). Laissé vide, le critère est signalé dans `warnings` et le SQL
+    échoue.
+- **Advanced Options** : les surcharges d'appel habituelles du
+  [§10](#10-options-avancées) (langue, pool, public name, timeout) et *Include
+  Request in Output*, qui décrit ici l'appel SQL et la durée de chaque appel.
 
 **Sortie**
 
@@ -942,8 +969,8 @@ Chaque octet renvoyé par un outil coûte des tokens, à chaque appel :
 
 **Exécuter un requêteur graphique X3 avec des bornes**
 
-- `IntellX Query Interpreter for Sage X3`, Query Code `FRVEN055`, Execute
-  activé, une borne : colonne `BPCORD`, de `FR` à `FRZZZ`.
+- Opération `Run Sage X3 Query`, Query Code `FRVEN055`, Execute activé, une
+  borne : colonne `BPCORD`, de `FR` à `FRZZZ`.
 - Le nœud lit le requêteur, construit le SQL et renvoie les lignes en une
   seule étape. Désactivez Execute pour voir le SQL et la structure, et passez
   le `sql` à un nœud `SQL Select` si vous voulez le retoucher à la main.
