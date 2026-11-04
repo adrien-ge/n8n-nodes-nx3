@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 This file is written by hand. `auto-changelog` is redirected to
 `CHANGELOG.auto.md` (git-ignored) so releases never overwrite it.
 
+## [Unreleased]
+
+### Changed
+
+- HTTP errors now show what the server sent back. When Sage X3, or a proxy
+  in front of it, answers with an error status and a body, the node error
+  ends with `Server response: …`: the SOAP `faultstring`, the visible text of
+  an HTML error page (IIS, nginx, Syracuse) or the raw text, cut at 300
+  characters. A longer excerpt (2,000 characters) goes in the error
+  description, and in a `responseBody` field when the node continues on
+  fail. Until now only `Request failed with status code …` was shown, which
+  could not tell a stopped web service pool from an unreachable proxy.
+- HTTP 503 has its own message, in the node and in the credential test: on
+  Syracuse it usually means the classic SOAP pool named in Pool Alias is
+  stopped, restarting or out of free channels (Administration > Web
+  services), or that a proxy cannot reach Syracuse.
+
 ## [0.6.0] - 2026-10-12
 
 ### Added

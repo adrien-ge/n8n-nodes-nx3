@@ -1248,7 +1248,11 @@ export class Nx3Soap implements INodeType {
 				returnData.push({ json: output, pairedItem: i });
 			} catch (error) {
 				const err = error as Error & { code?: string };
-				const { message: friendlyMessage, httpStatus } = describeX3Error(err, soapUrl);
+				const {
+					message: friendlyMessage,
+					httpStatus,
+					responseBody,
+				} = describeX3Error(err, soapUrl);
 
 				if (this.continueOnFail()) {
 					const json: IDataObject = {
@@ -1258,6 +1262,7 @@ export class Nx3Soap implements INodeType {
 						url: soapUrl,
 						raw: err.message,
 					};
+					if (responseBody !== undefined) json.responseBody = responseBody;
 					if (queryState) {
 						json.queryCode = queryState.queryCode;
 						json.phase = queryState.phase;
@@ -1270,6 +1275,7 @@ export class Nx3Soap implements INodeType {
 				throw new NodeApiError(this.getNode(), error as JsonObject, {
 					itemIndex: i,
 					message: friendlyMessage,
+					...(responseBody !== undefined ? { description: responseBody } : {}),
 				});
 			}
 		}
