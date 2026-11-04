@@ -360,10 +360,92 @@ export function describeHttpError(status: number, url: string): string | undefin
 	if (status === 407) {
 		return `A proxy requires authentication (HTTP 407) before reaching ${url}`;
 	}
-	if (status === 502 || status === 503 || status === 504) {
+	if (status === 503) {
+		return `Sage X3, or a proxy in front of it, returned HTTP 503 Service Unavailable for ${url} — on Syracuse this usually means the classic SOAP web service pool named in the credential (poolAlias) is stopped, restarting, or has no free channel (Administration > Web services). A proxy answers 503 when it cannot reach Syracuse`;
+	}
+	if (status === 502 || status === 504) {
 		return `Sage X3, or a proxy in front of it, returned HTTP ${status} for ${url} — the service is down, restarting, or overloaded`;
 	}
 	return undefined;
+}
+
+function bodyToText(data: unknown): string | undefined {
+	if (data === undefined || data === null) return undefined;
+	if (typeof data === 'string') return data;
+	if (Buffer.isBuffer(data)) return data.toString('utf8');
+	if (data instanceof ArrayBuffer) return Buffer.from(data).toString('utf8');
+	if (ArrayBuffer.isView(data)) {
+		return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('utf8');
+	}
+	if (typeof data === 'object') {
+		// A stream has already been consumed or never will be: nothing to show.
+		if (typeof (data as { pipe?: unknown }).pipe === 'function') return undefined;
+		try {
+			return JSON.stringify(data);
+		} catch {
+			return undefined;
+		}
+	}
+	return String(data);
+}
+
+/**
+ * The body the server sent with a failed HTTP response, as text. The request
+ * helper wraps the transport error (NodeApiError around an AxiosError), so the
+ * body can sit a few `cause` levels down.
+ */
+export function extractHttpResponseBody(err: unknown): string | undefined {
+	const seen = new Set<unknown>();
+	let current: unknown = err;
+	for (let depth = 0; depth < 5; depth++) {
+		if (!current || typeof current !== 'object' || seen.has(current)) break;
+		seen.add(current);
+		const e = current as {
+			response?: { data?: unknown; body?: unknown };
+			context?: { data?: unknown };
+			cause?: unknown;
+			errorResponse?: unknown;
+		};
+		for (const candidate of [e.response?.data, e.response?.body, e.context?.data]) {
+			const text = bodyToText(candidate);
+			if (text && text.trim()) return text;
+		}
+		current = e.cause ?? e.errorResponse;
+	}
+	return undefined;
+}
+
+/**
+ * Reduce a response body to one readable line: the SOAP faultstring when there
+ * is one, the visible text of an HTML error page (proxies, IIS, Syracuse), or
+ * the raw text otherwise. Whitespace collapsed, cut at maxLength.
+ */
+export function summarizeResponseBody(text: string, maxLength = 300): string | undefined {
+	let out: string;
+	const fault = /<(?:[\w-]+:)?faultstring\b[^>]*>([\s\S]*?)<\/(?:[\w-]+:)?faultstring>/i.exec(text);
+	if (fault) {
+		out = readTextContent(fault[1]);
+	} else if (/<(?:html|head|body|title|h1)\b/i.test(text)) {
+		const title = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(text)?.[1] ?? '';
+		const bodyHtml = /<body\b[^>]*>([\s\S]*?)<\/body>/i.exec(text)?.[1] ?? text;
+		const visible = (html: string) =>
+			xmlUnescape(
+				html
+					.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, ' ')
+					.replace(/<[^>]+>/g, ' ')
+					.replace(/&nbsp;/g, ' '),
+			)
+				.replace(/\s+/g, ' ')
+				.trim();
+		const titleText = visible(title);
+		const bodyText = visible(bodyHtml);
+		out = titleText && !bodyText.startsWith(titleText) ? `${titleText} — ${bodyText}` : bodyText;
+	} else {
+		out = text;
+	}
+	out = out.replace(/\s+/g, ' ').trim();
+	if (!out) return undefined;
+	return out.length > maxLength ? `${out.slice(0, maxLength - 1)}…` : out;
 }
 
 /**
@@ -1394,18 +1476,28 @@ export async function postSoapEnvelope(
 /**
  * Turn whatever the request layer threw into one actionable sentence: HTTP
  * status first (the server answered), then network causes, then the raw message.
+ * When the server sent a body with its error status, an excerpt is appended:
+ * it is what tells a stopped pool from a proxy page, and the status alone cannot.
  */
 export function describeX3Error(
 	err: Error & { code?: string },
 	soapUrl: string,
-): { message: string; httpStatus?: number } {
+): { message: string; httpStatus?: number; responseBody?: string } {
 	const httpStatus = extractHttpStatus(err);
 	const hint =
 		(httpStatus !== undefined ? describeHttpError(httpStatus, soapUrl) : undefined) ??
 		describeNetworkError(err);
-	const out: { message: string; httpStatus?: number } = {
-		message: hint ?? err.message ?? 'Unknown error calling Sage X3',
-	};
-	if (httpStatus !== undefined) out.httpStatus = httpStatus;
+	let message = hint ?? err.message ?? 'Unknown error calling Sage X3';
+	const out: { message: string; httpStatus?: number; responseBody?: string } = { message };
+	if (httpStatus !== undefined) {
+		out.httpStatus = httpStatus;
+		const rawBody = extractHttpResponseBody(err);
+		const excerpt = rawBody ? summarizeResponseBody(rawBody) : undefined;
+		if (excerpt) {
+			message = `${message}. Server response: ${excerpt}`;
+			out.message = message;
+			out.responseBody = summarizeResponseBody(rawBody as string, 2000);
+		}
+	}
 	return out;
 }

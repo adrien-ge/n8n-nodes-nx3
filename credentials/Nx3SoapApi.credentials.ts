@@ -162,6 +162,14 @@ export class Nx3SoapApi implements ICredentialType {
 			{
 				type: 'responseCode',
 				properties: {
+					value: 503,
+					message:
+						'Sage X3, or a proxy in front of it, answered 503 Service Unavailable. On Syracuse this usually means the classic SOAP web service pool named in Pool Alias is stopped, restarting, or has no free channel: check it under Administration > Web services. A proxy answers 503 when it cannot reach Syracuse.',
+				},
+			},
+			{
+				type: 'responseCode',
+				properties: {
 					value: 401,
 					message: 'Sage X3 rejected the credentials — check the Syracuse username and password.',
 				},
